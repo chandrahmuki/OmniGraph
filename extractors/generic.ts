@@ -28,9 +28,11 @@ const IMPORT_PATTERNS = [
   /from\s+(\.[^\s]+)\s+import/g,
   // C/C++: #include "local.h"
   /#include\s+['"]([^'"]+)['"]/g,
-  // Nix: import ./path or inputs.something
+  // Nix: import ./path
   /import\s+['"](\.\/[^'"]+)['"]/g,
   /import\s+(\.\/[^\s;]+)/g,
+  // Nix: imports = [ ./path ./other ]
+  /imports\s*=\s*\[([^\]]+)\]/g,
   // Rust: mod path; use crate::path;
   /mod\s+(\w+)/g,
   /use\s+crate::([\w:]+)/g,
@@ -38,6 +40,8 @@ const IMPORT_PATTERNS = [
   /import\s+['"]([^'"]+)['"]/g,
   // Generic: include, require, load
   /(?:include|require|load)\s+['"](\.\/[^'"]+)['"]/g,
+  // Markdown: [text](./path)
+  /\[.*?\]\((\.\/[^)]+)\)/g,
 ];
 
 const OMNIGRAPH_TAG_PATTERN = /#\s*@omnigraph:\s*(\w+)\s+(.+)/g;
@@ -79,27 +83,35 @@ export function extract(content: string, filePath: string): ExtractResult {
       pattern.lastIndex = 0;
       let match: RegExpExecArray | null;
       while ((match = pattern.exec(line)) !== null) {
-        const rawPath = match[1];
-        const resolvedPath = resolveRelativePath(filePath, rawPath);
+        const rawMatch = match[1];
 
-        // Ajouter le nœud importé (s'il n'existe pas encore)
-        const importedNode: ExtractedNode = {
-          id: resolvedPath,
-          type: "file",
-          label: resolvedPath.split("/").pop() || resolvedPath,
-          file_path: resolvedPath,
-          line_number: lineNum,
-        };
-        if (!nodes.find(n => n.id === importedNode.id)) {
-          nodes.push(importedNode);
+        // Nix: imports = [ ./a ./b ] -> split multiple paths
+        const rawPaths = rawMatch.includes("./")
+          ? rawMatch.split(/\s+/).filter(s => s.startsWith("."))
+          : [rawMatch];
+
+        for (const rawPath of rawPaths) {
+          const resolvedPath = resolveRelativePath(filePath, rawPath);
+
+          // Ajouter le nœud importé (s'il n'existe pas encore)
+          const importedNode: ExtractedNode = {
+            id: resolvedPath,
+            type: "file",
+            label: resolvedPath.split("/").pop() || resolvedPath,
+            file_path: resolvedPath,
+            line_number: lineNum,
+          };
+          if (!nodes.find(n => n.id === importedNode.id)) {
+            nodes.push(importedNode);
+          }
+
+          edges.push({
+            from_id: filePath,
+            to_id: resolvedPath,
+            type: "imports",
+            confidence: "auto",
+          });
         }
-
-        edges.push({
-          from_id: filePath,
-          to_id: resolvedPath,
-          type: "imports",
-          confidence: "auto",
-        });
       }
     }
 

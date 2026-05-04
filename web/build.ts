@@ -2,10 +2,21 @@ import { GraphDB } from "/home/david/.local/share/omnigraph/db.ts";
 
 export function buildHtml(dbPath: string, outputPath: string): void {
   const fs = require("node:fs");
+  const path = require("node:path");
   const db = new GraphDB(dbPath);
 
   const nodes = db.getAllNodes();
   const edges = db.getAllEdges();
+
+  // Inline D3 for file:// compatibility
+  const d3Path = path.join(import.meta.dirname || path.dirname(import.meta.url.replace("file://", "")), "d3.min.js");
+  let d3Code = "";
+  try {
+    d3Code = fs.readFileSync(d3Path, "utf-8");
+  } catch {
+    // fallback: try absolute path
+    try { d3Code = fs.readFileSync("/home/david/.local/share/omnigraph/web/d3.min.js", "utf-8"); } catch {}
+  }
 
   const html = `<!DOCTYPE html>
 <html lang="fr">
@@ -106,7 +117,10 @@ export function buildHtml(dbPath: string, outputPath: string): void {
   <div id="stats"></div>
   <svg id="graph"></svg>
 
-  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script>
+    // D3 inlined for offline/file:// compatibility
+    ${d3Code}
+  </script>
   <script>
     const nodes = ${JSON.stringify(nodes)};
     const edges = ${JSON.stringify(edges)};
@@ -130,11 +144,25 @@ export function buildHtml(dbPath: string, outputPath: string): void {
       .on('zoom', (e) => g.attr('transform', e.transform));
     svg.call(zoom);
 
+    // Initialize positions near center to prevent explosion
+    nodes.forEach(n => {
+      if (!n.x) n.x = width / 2 + (Math.random() - 0.5) * 200;
+      if (!n.y) n.y = height / 2 + (Math.random() - 0.5) * 200;
+    });
+
+    // D3 needs source/target, not from_id/to_id
+    edges.forEach(e => {
+      e.source = e.from_id;
+      e.target = e.to_id;
+    });
+
     const simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(edges).id(d => d.id).distance(100))
-      .force('charge', d3.forceManyBody().strength(-300))
+      .force('link', d3.forceLink(edges).id(d => d.id).distance(80))
+      .force('charge', d3.forceManyBody().strength(-50))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => Math.sqrt((d.connections || 1)) * 8 + 10));
+      .force('collision', d3.forceCollide().radius(d => Math.sqrt((d.connections || 1)) * 6 + 8))
+      .force('x', d3.forceX(width / 2).strength(0.05))
+      .force('y', d3.forceY(height / 2).strength(0.05));
 
     // Compter connexions
     nodes.forEach(n => {
@@ -200,7 +228,7 @@ export function buildHtml(dbPath: string, outputPath: string): void {
       });
       label.style('opacity', d => activeFilters.has(d.type) ? 1 : 0);
       link.style('opacity', d =>
-        visibleNodes.has(d.from_id) && visibleNodes.has(d.to_id) ? 0.6 : 0.05
+        visibleNodes.has(d.source.id) && visibleNodes.has(d.target.id) ? 0.6 : 0.05
       );
     }
 
@@ -222,19 +250,19 @@ export function buildHtml(dbPath: string, outputPath: string): void {
       node.style('opacity', d => matched.has(d.id) ? 1 : 0.1);
       label.style('opacity', d => matched.has(d.id) ? 1 : 0);
       link.style('opacity', d =>
-        matched.has(d.from_id) && matched.has(d.to_id) ? 0.6 : 0.05
+        matched.has(d.source.id) && matched.has(d.target.id) ? 0.6 : 0.05
       );
     });
 
     // Clic sur nœud
     node.on('click', (e, d) => {
       e.stopPropagation();
-      const connected = edges.filter(edge => edge.from_id === d.id || edge.to_id === d.id);
-      const neighborIds = new Set(connected.map(e => e.from_id === d.id ? e.to_id : e.from_id));
+      const connected = edges.filter(edge => edge.source.id === d.id || edge.target.id === d.id);
+      const neighborIds = new Set(connected.map(e => e.source.id === d.id ? e.target.id : e.source.id));
 
       node.style('opacity', n => neighborIds.has(n.id) || n.id === d.id ? 1 : 0.1);
       label.style('opacity', n => neighborIds.has(n.id) || n.id === d.id ? 1 : 0);
-      link.style('opacity', l => l.from_id === d.id || l.to_id === d.id ? 0.8 : 0.05);
+      link.style('opacity', l => l.source.id === d.id || l.target.id === d.id ? 0.8 : 0.05);
 
       document.getElementById('info').style.display = 'block';
       document.getElementById('infoTitle').textContent = d.label;
