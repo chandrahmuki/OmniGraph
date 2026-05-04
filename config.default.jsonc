@@ -1,0 +1,36 @@
+// Config par defaut OmniGraph
+// Copie ca dans ton projet comme omnigraph.jsonc et modifie
+{
+  "project_name": "Mon Projet",
+  // Repertoires a scanner
+  "scan_dirs": ["."],
+  // Repertoires a ignorer (en plus de .git, node_modules, etc)
+  "ignore_dirs": [".git", "node_modules", ".omnigraph", "target", "dist", "build"],
+  // Extensions de fichiers a scanner
+  "extensions": [".ts", ".js", ".nix", ".py", ".rs", ".go", ".md", ".json", ".yaml", ".yml", ".toml"],
+  // Types d entites et leurs couleurs pour la viz
+  "entity_types": {
+    "file":     {"color": "#3b82f6", "label": "Fichier"},
+    "module":   {"color": "#6366f1", "label": "Module"},
+    "function": {"color": "#10b981", "label": "Fonction"},
+    "import":   {"color": "#f59e0b", "label": "Import"},
+    "error":    {"color": "#ef4444", "label": "Erreur"},
+    "lesson":   {"color": "#22c55e", "label": "Lesson"},
+    "concept":  {"color": "#a855f7", "label": "Concept"},
+    "tag":      {"color": "#ec4899", "label": "Tag"}
+  },
+  // Types de relations
+  "relation_types": {
+    "imports":     {"label": "importe"},
+    "depends_on":  {"label": "depend de"},
+    "references":  {"label": "reference"},
+    "caused":      {"label": "a cause"},
+    "fixed_by":    {"label": "corrigé par"},
+    "links_to":    {"label": "lien vers"},
+    "mentions":    {"label": "mentionne"}
+  },
+  // Extracteurs a activer
+  "extractors": [
+    "./extractors/generic.ts"
+  ]
+}
