@@ -38,11 +38,18 @@
     "learned_from":         {"label": "apris de",          "color": "#22c55e"},
     "mentions":             {"label": "mentionne",         "color": "#8b949e"},
     "defines":              {"label": "definit",          "color": "#10b981"},
-    "calls":                {"label": "appelle",          "color": "#f97316"}
+    "calls":                {"label": "appelle",          "color": "#f97316"},
+    "shares_dep":           {"label": "partage dep",      "color": "#8b949e"}
   },
   "memory": {
     "sessions_dir": "memory/sessions",
     "lessons_dir": "memory/lessons",
     "skills_dir": "memory/skills"
+  },
+  "mappings": {
+    "auto_discover": {
+      "dirs": ["modules", "src", "lib"],
+      "extensions": [".nix", ".ts", ".py", ".rs", ".go"]
+    }
   }
 }

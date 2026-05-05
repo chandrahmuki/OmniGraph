@@ -1,4 +1,5 @@
 import { Config } from "./config";
+import express from "express";
 
 export class AuthService {
   private config: Config;

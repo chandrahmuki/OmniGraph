@@ -12,6 +12,14 @@ export interface Config {
     lessons_dir: string;
     skills_dir: string;
   };
+  mappings?: {
+    concepts?: Record<string, string>;
+    programs?: Record<string, string>;
+    auto_discover?: {
+      dirs?: string[];
+      extensions?: string[];
+    };
+  };
 }
 
 export function computeHash(content: string): string {
@@ -142,8 +150,36 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
     console.log(`Scanned ${scannedCount} files`);
   }
 
+  const allNodes = db.getAllNodes();
+  const allEdges = db.getAllEdges();
+  const fileToInputs = new Map<string, string[]>();
+  for (const e of allEdges) {
+    if (e.type === "uses_input" && (e.from_id.endsWith(".ts") || e.from_id.endsWith(".js") || e.from_id.endsWith(".py") || e.from_id.endsWith(".rs") || e.from_id.endsWith(".go") || e.from_id.endsWith(".nix"))) {
+      if (!fileToInputs.has(e.from_id)) fileToInputs.set(e.from_id, []);
+      fileToInputs.get(e.from_id)!.push(e.to_id);
+    }
+  }
+
+  const sharedDeps = new Map<string, string[]>();
+  for (const [file, inputs] of fileToInputs) {
+    for (const input of inputs) {
+      if (!sharedDeps.has(input)) sharedDeps.set(input, []);
+      sharedDeps.get(input)!.push(file);
+    }
+  }
+
+  for (const [input, files] of sharedDeps) {
+    if (files.length >= 2) {
+      const hubId = `_shared_dep:${input}`;
+      db.insertNode({ id: hubId, type: "shared_dependency", label: input });
+      for (const file of files) {
+        db.insertEdge({ from_id: file, to_id: hubId, type: "shares_dep", confidence: "inferred" });
+      }
+    }
+  }
+
   if (config.memory) {
-    const memResult = extractMemory(projectPath, config.memory);
+    const memResult = extractMemory(projectPath, config.memory, config.mappings);
     for (const node of memResult.nodes) {
       db.insertNode(node);
     }
