@@ -1,11 +1,12 @@
 import { GraphDB } from "./db.ts";
 import { extract } from "./extractors/generic.ts";
 import { extractMemory } from "./extractors/memory.ts";
-import { initTreeSitter, extractWithTreeSitter, isTreeSitterReady } from "./extractors/tree-sitter.ts";
+import { initTreeSitter, extractWithTreeSitter, isTreeSitterReady, buildFunctionRegistry, FunctionRegistry } from "./extractors/tree-sitter.ts";
 
 export interface Config {
   scan_dirs: string[];
   ignore_dirs: string[];
+  ignore_files?: string[];
   extensions: string[];
   memory?: {
     sessions_dir: string;
@@ -43,6 +44,17 @@ function hasExtension(filePath: string, extensions: string[]): boolean {
   return extensions.some(ext => filePath.endsWith(ext));
 }
 
+function shouldIgnoreFile(filePath: string, ignoreFiles: string[]): boolean {
+  const base = filePath.split("/").pop() || "";
+  return ignoreFiles.some(pattern => {
+    if (pattern.includes("*")) {
+      const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
+      return regex.test(base);
+    }
+    return base === pattern;
+  });
+}
+
 export function loadConfig(projectPath: string): Config {
   const fs = require("node:fs");
   const path = require("node:path");
@@ -67,30 +79,46 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
   const path = require("node:path");
   const config = loadConfig(projectPath);
 
+  console.log("  scan_dirs:", config.scan_dirs);
+  console.log("  extensions:", config.extensions);
+
   try {
     await initTreeSitter();
-    console.log("Tree-sitter initialized (Nix grammar loaded)");
+    console.log("Tree-sitter initialized (Nix grammar loaded), ready:", isTreeSitterReady());
   } catch (e) {
     console.log("Tree-sitter not available, using regex fallback");
+  }
+
+  let knownFunctions: FunctionRegistry | undefined;
+  console.log("  isTreeSitterReady check:", isTreeSitterReady());
+  if (isTreeSitterReady()) {
+    console.log("  Pass 1: building function registry...");
+    knownFunctions = await buildFunctionRegistry(projectPath);
+    console.log("    Registry:", knownFunctions.simpleNames.size, "simple names,", knownFunctions.qualifiedNames.size, "qualified names");
   }
 
   let skippedCount = 0;
   let scannedCount = 0;
 
   for (const scanDir of config.scan_dirs) {
+    console.log("  Scanning:", scanDir);
     const fullDir = path.resolve(projectPath, scanDir);
     if (!fs.existsSync(fullDir)) continue;
 
     const files = fs.readdirSync(fullDir, { recursive: true }) as string[];
+    console.log("    Found", files.length, "entries");
     for (const file of files) {
       const filePath = path.join(fullDir, file);
       const relativePath = path.relative(projectPath, filePath);
 
       if (fs.statSync(filePath).isDirectory()) continue;
       if (shouldIgnore(relativePath, config.ignore_dirs)) continue;
+      if (shouldIgnoreFile(relativePath, config.ignore_files || [])) continue;
       if (!hasExtension(filePath, config.extensions)) continue;
 
       try {
+        const start = Date.now();
+        console.log("    Processing:", relativePath);
         const content = fs.readFileSync(filePath, "utf-8");
         const contentHash = computeHash(content);
 
@@ -106,7 +134,7 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
 
         let result;
         if (isTreeSitterReady()) {
-          const tsResult = await extractWithTreeSitter(content, relativePath);
+          const tsResult = await extractWithTreeSitter(content, relativePath, knownFunctions);
           if (tsResult) {
             result = tsResult;
           } else {
@@ -115,6 +143,7 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
         } else {
           result = extract(content, relativePath);
         }
+        console.log("      ->", Date.now() - start, "ms,", result?.nodes?.length, "nodes");
 
         result.nodes = result.nodes.map(n => {
           if (n.id === relativePath) {

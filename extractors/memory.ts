@@ -35,6 +35,9 @@ const TRANSVERSE_PATTERNS = [
   /\b(build|cache|overlay|config|crash|fix|migration|install|override|rollback|update|error|block)\b/gi,
 ];
 
+const ERROR_PATTERN = /\b(crash|failure|broken|segfault|panic|OOM|unreachable|fatal|error|bug|issue|hang|freeze)\b/gi;
+const FIX_PATTERN = /\b(fix|fixed|resolve|resolved|patch|workaround|hack|mitigate)\b/gi;
+
 const INPUT_PATTERN = /inputs\.(\w[\w-]*)/g;
 const LESSON_PATTERN = /lessons\/([\w-]+)\.md/g;
 const SKILL_PATTERN = /skills\/([\w-]+)/g;
@@ -273,6 +276,45 @@ export function extractMemory(
     }
   }
 
+  const errorFixMap = new Map<string, string>();
+  const sessionsForErrors = new Map<string, string[]>();
+
+  const sessionsDir2 = path.join(projectPath, config.sessions_dir);
+  if (fs.existsSync(sessionsDir2)) {
+    for (const entry of fs.readdirSync(sessionsDir2)) {
+      const summaryPath = path.join(sessionsDir2, entry, "summary.md");
+      if (!fs.existsSync(summaryPath)) continue;
+
+      const sessionId = entry;
+      try {
+        const content = fs.readFileSync(summaryPath, "utf-8");
+        const lines = content.split("\n");
+
+        for (const line of lines) {
+          const errorMatch = line.match(ERROR_PATTERN);
+          const fixMatch = line.match(FIX_PATTERN);
+
+          if (errorMatch) {
+            const errorId = `error:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
+            const errorLabel = line.trim().slice(0, 120);
+            addNode(errorId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
+            addEdge(sessionId, errorId, "detected_error");
+            if (!sessionsForErrors.has(errorId)) sessionsForErrors.set(errorId, []);
+            sessionsForErrors.get(errorId)!.push(sessionId);
+          }
+
+          if (fixMatch) {
+            const fixId = `fix:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
+            const fixLabel = line.trim().slice(0, 120);
+            addNode(fixId, "fix", fixLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
+            addEdge(sessionId, fixId, "applied_fix");
+            errorFixMap.set(fixId, errorId);
+          }
+        }
+      } catch {}
+    }
+  }
+
   const lessonsDir = path.join(projectPath, config.lessons_dir);
   if (fs.existsSync(lessonsDir)) {
     for (const entry of fs.readdirSync(lessonsDir)) {
@@ -314,6 +356,15 @@ export function extractMemory(
             const matchingSessions = sessionDateIndex.get(item.createdAt) || [];
             for (const sId of matchingSessions) {
               addEdge(itemId, sId, "lesson_learned_in");
+            }
+          }
+
+          const itemErrorMatch = item.text.match(ERROR_PATTERN);
+          if (itemErrorMatch) {
+            for (const [errorId, sessionList] of sessionsForErrors) {
+              if (sessionList.some(s => item.createdAt && s.startsWith(item.createdAt))) {
+                addEdge(itemId, errorId, "learned_from");
+              }
             }
           }
         }

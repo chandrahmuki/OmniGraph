@@ -80,6 +80,7 @@ interface WalkResult {
   attrPaths: { text: string; row: number }[];
   withExprs: { expr: string; body: string; row: number; packages: string[] }[];
   interpolations: { text: string; row: number }[];
+  rationales: RationaleEntry[];
 }
 
 function walkTree(node: any, result: WalkResult): void {
@@ -123,6 +124,12 @@ function walkTree(node: any, result: WalkResult): void {
   if (node.type === "interpolation") {
     result.interpolations.push({ text: node.text, row: node.startPosition.row });
   }
+  if (node.type === "comment") {
+    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
+    if (RATIONALE_PATTERN.test(node.text)) {
+      result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
+    }
+  }
   for (let i = 0; i < node.childCount; i++) {
     walkTree(node.child(i), result);
   }
@@ -149,7 +156,7 @@ function extractNix(
 
   parser.setLanguage(lang);
   const tree = parser.parse(content);
-  const result: WalkResult = { paths: [], selects: [], applies: [], strings: [], assigns: [], attrPaths: [], withExprs: [], interpolations: [] };
+  const result: WalkResult = { paths: [], selects: [], applies: [], strings: [], assigns: [], attrPaths: [], withExprs: [], interpolations: [], rationales: [] };
   walkTree(tree.rootNode, result);
 
   for (const p of result.paths) {
@@ -352,9 +359,17 @@ function extractNix(
     }
   }
 
+  for (const r of result.rationales) {
+    const rationaleId = `${filePath}:rationale:${r.row}`;
+    addNode(rationaleId, "rationale", r.text.replace(/^#\s*/, "").slice(0, 120), filePath, r.row + 1);
+    edges.push({ from_id: filePath, to_id: rationaleId, type: "has_rationale", confidence: "extracted" });
+  }
+
   tree.delete();
   return { nodes, edges, concepts };
 }
+
+interface RationaleEntry { text: string; row: number; targetRow: number }
 
 interface TsWalkResult {
   functions: { name: string; row: number; text: string; parent?: string }[];
@@ -364,6 +379,7 @@ interface TsWalkResult {
   imports: { source: string; names: string[]; row: number; isRelative: boolean }[];
   exports: { names: string[]; row: number }[];
   calls: { callee: string; row: number }[];
+  rationales: RationaleEntry[];
 }
 
 function walkTsTree(node: any, result: TsWalkResult, parentClass?: string): void {
@@ -472,6 +488,13 @@ function walkTsTree(node: any, result: TsWalkResult, parentClass?: string): void
     }
   }
 
+  if (node.type === "comment") {
+    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
+    if (RATIONALE_PATTERN.test(node.text)) {
+      result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
+    }
+  }
+
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     const childParent = (node.type === "class_declaration" || node.type === "class") && child.type === "class_body"
@@ -486,6 +509,7 @@ function extractTsJs(
   filePath: string,
   lang: any,
   parser: any,
+  knownFunctions?: FunctionRegistry,
 ): ExtractResult {
   const nodes: ExtractedNode[] = [];
   const edges: ExtractedEdge[] = [];
@@ -504,7 +528,7 @@ function extractTsJs(
   const tree = parser.parse(content);
   const result: TsWalkResult = {
     functions: [], classes: [], interfaces: [], typeAliases: [],
-    imports: [], exports: [], calls: [],
+    imports: [], exports: [], calls: [], rationales: [],
   };
   walkTsTree(tree.rootNode, result);
 
@@ -562,9 +586,29 @@ function extractTsJs(
   }
 
   for (const call of result.calls) {
-    const callId = `${filePath}:call:${call.callee}:${call.row}`;
-    addNode(callId, "function", `call:${call.callee}`, filePath, call.row + 1);
-    edges.push({ from_id: filePath, to_id: callId, type: "calls", confidence: "auto" });
+    const callee = call.callee;
+    const simpleName = callee.includes(".") ? callee.split(".").pop()! : callee;
+    if (knownFunctions && !knownFunctions.simpleNames.has(simpleName) && !knownFunctions.qualifiedNames.has(callee)) {
+      continue;
+    }
+    const targetFile = knownFunctions
+      ? findFileForFunction(callee, knownFunctions, filePath)
+      : filePath;
+    const callTargetId = knownFunctions && knownFunctions.qualifiedNames.has(callee)
+      ? callee
+      : `${targetFile}:${simpleName}`;
+    const callerFn = findCallerFunction(filePath, result.functions, call.row);
+    const fromId = callerFn || filePath;
+    addNode(callTargetId, "function", simpleName, targetFile);
+    edges.push({ from_id: fromId, to_id: callTargetId, type: "calls", confidence: "inferred" });
+  }
+
+  for (const r of result.rationales) {
+    const rationaleId = `${filePath}:rationale:${r.row}`;
+    const targetFn = findCallerFunction(filePath, result.functions, r.targetRow);
+    const targetId = targetFn || filePath;
+    addNode(rationaleId, "rationale", r.text.replace(/^(\/\/|#)\s*/, "").slice(0, 120), filePath, r.row + 1);
+    edges.push({ from_id: targetId, to_id: rationaleId, type: "has_rationale", confidence: "extracted" });
   }
 
   const concepts: ExtractedConcept[] = [];
@@ -594,6 +638,7 @@ interface PyWalkResult {
   classes: { name: string; row: number; methods: string[] }[];
   imports: { module: string; names: string[]; row: number; isRelative: boolean }[];
   calls: { callee: string; row: number }[];
+  rationales: RationaleEntry[];
 }
 
 function walkPyTree(node: any, result: PyWalkResult, parentClass?: string): void {
@@ -664,6 +709,13 @@ function walkPyTree(node: any, result: PyWalkResult, parentClass?: string): void
     }
   }
 
+  if (node.type === "comment") {
+    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
+    if (RATIONALE_PATTERN.test(node.text)) {
+      result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
+    }
+  }
+
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     const childParent = (node.type === "class_definition") && child.type === "block"
@@ -678,6 +730,7 @@ function extractPython(
   filePath: string,
   lang: any,
   parser: any,
+  knownFunctions?: FunctionRegistry,
 ): ExtractResult {
   const nodes: ExtractedNode[] = [];
   const edges: ExtractedEdge[] = [];
@@ -694,7 +747,7 @@ function extractPython(
 
   parser.setLanguage(lang);
   const tree = parser.parse(content);
-  const result: PyWalkResult = { functions: [], classes: [], imports: [], calls: [] };
+  const result: PyWalkResult = { functions: [], classes: [], imports: [], calls: [], rationales: [] };
   walkPyTree(tree.rootNode, result);
 
   for (const fn of result.functions) {
@@ -742,9 +795,29 @@ function extractPython(
   }
 
   for (const call of result.calls) {
-    const callId = `${filePath}:call:${call.callee}:${call.row}`;
-    addNode(callId, "function", `call:${call.callee}`, filePath, call.row + 1);
-    edges.push({ from_id: filePath, to_id: callId, type: "calls", confidence: "auto" });
+    const callee = call.callee;
+    const simpleName = callee.includes(".") ? callee.split(".").pop()! : callee;
+    if (knownFunctions && !knownFunctions.simpleNames.has(simpleName) && !knownFunctions.qualifiedNames.has(callee)) {
+      continue;
+    }
+    const targetFile = knownFunctions
+      ? findFileForFunction(callee, knownFunctions, filePath)
+      : filePath;
+    const callTargetId = knownFunctions && knownFunctions.qualifiedNames.has(callee)
+      ? callee
+      : `${targetFile}:${simpleName}`;
+    const callerFn = findCallerFunction(filePath, result.functions, call.row);
+    const fromId = callerFn || filePath;
+    addNode(callTargetId, "function", simpleName, targetFile);
+    edges.push({ from_id: fromId, to_id: callTargetId, type: "calls", confidence: "inferred" });
+  }
+
+  for (const r of result.rationales) {
+    const rationaleId = `${filePath}:rationale:${r.row}`;
+    const targetFn = findCallerFunction(filePath, result.functions, r.targetRow);
+    const targetId = targetFn || filePath;
+    addNode(rationaleId, "rationale", r.text.replace(/^(\/\/|#)\s*/, "").slice(0, 120), filePath, r.row + 1);
+    edges.push({ from_id: targetId, to_id: rationaleId, type: "has_rationale", confidence: "extracted" });
   }
 
   const concepts: ExtractedConcept[] = [];
@@ -770,6 +843,7 @@ interface RsWalkResult {
   uses: { path: string; row: number }[];
   mods: { name: string; row: number }[];
   calls: { callee: string; row: number }[];
+  rationales: RationaleEntry[];
 }
 
 function walkRsTree(node: any, result: RsWalkResult, currentImpl?: string): void {
@@ -839,6 +913,13 @@ function walkRsTree(node: any, result: RsWalkResult, currentImpl?: string): void
     }
   }
 
+  if (node.type === "line_comment" || node.type === "block_comment") {
+    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
+    if (RATIONALE_PATTERN.test(node.text)) {
+      result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
+    }
+  }
+
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     const childImpl = node.type === "impl_item"
@@ -853,6 +934,7 @@ function extractRust(
   filePath: string,
   lang: any,
   parser: any,
+  knownFunctions?: FunctionRegistry,
 ): ExtractResult {
   const nodes: ExtractedNode[] = [];
   const edges: ExtractedEdge[] = [];
@@ -869,7 +951,7 @@ function extractRust(
 
   parser.setLanguage(lang);
   const tree = parser.parse(content);
-  const result: RsWalkResult = { functions: [], structs: [], enums: [], traits: [], impls: [], uses: [], mods: [], calls: [] };
+  const result: RsWalkResult = { functions: [], structs: [], enums: [], traits: [], impls: [], uses: [], mods: [], calls: [], rationales: [] };
   walkRsTree(tree.rootNode, result);
 
   for (const fn of result.functions) {
@@ -937,9 +1019,29 @@ function extractRust(
   }
 
   for (const call of result.calls) {
-    const callId = `${filePath}:call:${call.callee}:${call.row}`;
-    addNode(callId, "function", `call:${call.callee}`, filePath, call.row + 1);
-    edges.push({ from_id: filePath, to_id: callId, type: "calls", confidence: "auto" });
+    const callee = call.callee;
+    const simpleName = callee.includes("::") ? callee.split("::").pop()! : (callee.includes(".") ? callee.split(".").pop()! : callee);
+    if (knownFunctions && !knownFunctions.simpleNames.has(simpleName) && !knownFunctions.qualifiedNames.has(callee)) {
+      continue;
+    }
+    const targetFile = knownFunctions
+      ? findFileForFunction(callee, knownFunctions, filePath)
+      : filePath;
+    const callTargetId = knownFunctions && knownFunctions.qualifiedNames.has(callee)
+      ? callee
+      : `${targetFile}:${simpleName}`;
+    const callerFn = findCallerFunction(filePath, result.functions, call.row);
+    const fromId = callerFn || filePath;
+    addNode(callTargetId, "function", simpleName, targetFile);
+    edges.push({ from_id: fromId, to_id: callTargetId, type: "calls", confidence: "inferred" });
+  }
+
+  for (const r of result.rationales) {
+    const rationaleId = `${filePath}:rationale:${r.row}`;
+    const targetFn = findCallerFunction(filePath, result.functions, r.targetRow);
+    const targetId = targetFn || filePath;
+    addNode(rationaleId, "rationale", r.text.replace(/^(\/\/|#|\/\/\/)\s*/, "").slice(0, 120), filePath, r.row + 1);
+    edges.push({ from_id: targetId, to_id: rationaleId, type: "has_rationale", confidence: "extracted" });
   }
 
   tree.delete();
@@ -952,6 +1054,7 @@ interface GoWalkResult {
   interfaces: { name: string; row: number }[];
   imports: { path: string; row: number }[];
   calls: { callee: string; row: number }[];
+  rationales: RationaleEntry[];
 }
 
 function walkGoTree(node: any, result: GoWalkResult): void {
@@ -1017,6 +1120,13 @@ function walkGoTree(node: any, result: GoWalkResult): void {
     }
   }
 
+  if (node.type === "comment") {
+    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
+    if (RATIONALE_PATTERN.test(node.text)) {
+      result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
+    }
+  }
+
   for (let i = 0; i < node.childCount; i++) {
     walkGoTree(node.child(i), result);
   }
@@ -1027,6 +1137,7 @@ function extractGo(
   filePath: string,
   lang: any,
   parser: any,
+  knownFunctions?: FunctionRegistry,
 ): ExtractResult {
   const nodes: ExtractedNode[] = [];
   const edges: ExtractedEdge[] = [];
@@ -1043,7 +1154,7 @@ function extractGo(
 
   parser.setLanguage(lang);
   const tree = parser.parse(content);
-  const result: GoWalkResult = { functions: [], structs: [], interfaces: [], imports: [], calls: [] };
+  const result: GoWalkResult = { functions: [], structs: [], interfaces: [], imports: [], calls: [], rationales: [] };
   walkGoTree(tree.rootNode, result);
 
   for (const fn of result.functions) {
@@ -1079,9 +1190,29 @@ function extractGo(
   }
 
   for (const call of result.calls) {
-    const callId = `${filePath}:call:${call.callee}:${call.row}`;
-    addNode(callId, "function", `call:${call.callee}`, filePath, call.row + 1);
-    edges.push({ from_id: filePath, to_id: callId, type: "calls", confidence: "auto" });
+    const callee = call.callee;
+    const simpleName = callee.includes(".") ? callee.split(".").pop()! : callee;
+    if (knownFunctions && !knownFunctions.simpleNames.has(simpleName) && !knownFunctions.qualifiedNames.has(callee)) {
+      continue;
+    }
+    const targetFile = knownFunctions
+      ? findFileForFunction(callee, knownFunctions, filePath)
+      : filePath;
+    const callTargetId = knownFunctions && knownFunctions.qualifiedNames.has(callee)
+      ? callee
+      : `${targetFile}:${simpleName}`;
+    const callerFn = findCallerFunction(filePath, result.functions, call.row);
+    const fromId = callerFn || filePath;
+    addNode(callTargetId, "function", simpleName, targetFile);
+    edges.push({ from_id: fromId, to_id: callTargetId, type: "calls", confidence: "inferred" });
+  }
+
+  for (const r of result.rationales) {
+    const rationaleId = `${filePath}:rationale:${r.row}`;
+    const targetFn = findCallerFunction(filePath, result.functions, r.targetRow);
+    const targetId = targetFn || filePath;
+    addNode(rationaleId, "rationale", r.text.replace(/^(\/\/|#)\s*/, "").slice(0, 120), filePath, r.row + 1);
+    edges.push({ from_id: targetId, to_id: rationaleId, type: "has_rationale", confidence: "extracted" });
   }
 
   tree.delete();
@@ -1105,9 +1236,126 @@ export function isTreeSitterReady(): boolean {
   return parserReady;
 }
 
+function findFileForFunction(callee: string, registry: FunctionRegistry, callerFile: string): string {
+  if (registry.qualifiedNames.has(callee)) {
+    return callee.split(":")[0];
+  }
+  for (const qName of registry.qualifiedNames) {
+    const parts = qName.split(":");
+    const fnName = parts[1];
+    if (fnName === callee) {
+      return parts[0];
+    }
+  }
+  return callerFile;
+}
+
+function findCallerFunction(filePath: string, functions: { name: string; row: number; parent?: string }[], callRow: number): string | null {
+  let best: { name: string; parent?: string } | null = null;
+  for (const fn of functions) {
+    if (fn.row <= callRow) {
+      best = fn;
+    }
+  }
+  if (!best) return null;
+  return best.parent ? `${filePath}:${best.parent}.${best.name}` : `${filePath}:${best.name}`;
+}
+
+export interface FunctionRegistry {
+  simpleNames: Set<string>;
+  qualifiedNames: Set<string>;
+}
+
+export async function buildFunctionRegistry(projectPath: string): Promise<FunctionRegistry> {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const simpleNames = new Set<string>();
+  const qualifiedNames = new Set<string>();
+
+  async function scanDir(dir: string) {
+    if (!fs.existsSync(dir)) return;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "grammars") continue;
+        scanDir(full);
+      } else if (entry.isFile()) {
+        const ext = "." + entry.name.split(".").pop();
+        const grammarName = EXT_TO_GRAMMAR[ext];
+        if (!grammarName) continue;
+        try {
+          const content = fs.readFileSync(full, "utf-8");
+          const lang = await getLang(grammarName);
+          if (!lang) continue;
+          const parser = new ParserClass();
+          parser.setLanguage(lang);
+          const tree = parser.parse(content);
+          const relativePath = path.relative(projectPath, full);
+
+          if (ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx") {
+            const tsResult: TsWalkResult = { functions: [], classes: [], interfaces: [], typeAliases: [], imports: [], exports: [], calls: [] };
+            walkTsTree(tree.rootNode, tsResult);
+            for (const fn of tsResult.functions) {
+              simpleNames.add(fn.name);
+              const qId = fn.parent ? `${relativePath}:${fn.parent}.${fn.name}` : `${relativePath}:${fn.name}`;
+              qualifiedNames.add(qId);
+            }
+            for (const cls of tsResult.classes) {
+              simpleNames.add(cls.name);
+              qualifiedNames.add(`${relativePath}:${cls.name}`);
+            }
+          } else if (ext === ".py") {
+            const pyResult: PyWalkResult = { functions: [], classes: [], imports: [], calls: [] };
+            walkPyTree(tree.rootNode, pyResult);
+            for (const fn of pyResult.functions) {
+              simpleNames.add(fn.name);
+              const qId = fn.parent ? `${relativePath}:${fn.parent}.${fn.name}` : `${relativePath}:${fn.name}`;
+              qualifiedNames.add(qId);
+            }
+            for (const cls of pyResult.classes) {
+              simpleNames.add(cls.name);
+              qualifiedNames.add(`${relativePath}:${cls.name}`);
+            }
+          } else if (ext === ".rs") {
+            const rsResult: RsWalkResult = { functions: [], structs: [], enums: [], traits: [], impls: [], uses: [], mods: [], calls: [] };
+            walkRsTree(tree.rootNode, rsResult);
+            for (const fn of rsResult.functions) {
+              simpleNames.add(fn.name);
+              const qId = fn.parent ? `${relativePath}:${fn.parent}::${fn.name}` : `${relativePath}:${fn.name}`;
+              qualifiedNames.add(qId);
+            }
+            for (const s of rsResult.structs) {
+              simpleNames.add(s.name);
+              qualifiedNames.add(`${relativePath}:${s.name}`);
+            }
+          } else if (ext === ".go") {
+            const goResult: GoWalkResult = { functions: [], structs: [], interfaces: [], imports: [], calls: [] };
+            walkGoTree(tree.rootNode, goResult);
+            for (const fn of goResult.functions) {
+              simpleNames.add(fn.name);
+              const qId = fn.receiver ? `${relativePath}:${fn.receiver}.${fn.name}` : `${relativePath}:${fn.name}`;
+              qualifiedNames.add(qId);
+            }
+            for (const s of goResult.structs) {
+              simpleNames.add(s.name);
+              qualifiedNames.add(`${relativePath}:${s.name}`);
+            }
+          }
+          tree.delete();
+        } catch {}
+      }
+    }
+  }
+
+  await scanDir(projectPath);
+  return { simpleNames, qualifiedNames };
+}
+
 export async function extractWithTreeSitter(
   content: string,
   filePath: string,
+  knownFunctions?: FunctionRegistry,
 ): Promise<ExtractResult | null> {
   if (!parserReady) return null;
 
@@ -1125,22 +1373,22 @@ export async function extractWithTreeSitter(
 
   if (ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx") {
     const parser = new ParserClass();
-    return extractTsJs(content, filePath, lang, parser);
+    return extractTsJs(content, filePath, lang, parser, knownFunctions);
   }
 
   if (ext === ".py") {
     const parser = new ParserClass();
-    return extractPython(content, filePath, lang, parser);
+    return extractPython(content, filePath, lang, parser, knownFunctions);
   }
 
   if (ext === ".rs") {
     const parser = new ParserClass();
-    return extractRust(content, filePath, lang, parser);
+    return extractRust(content, filePath, lang, parser, knownFunctions);
   }
 
   if (ext === ".go") {
     const parser = new ParserClass();
-    return extractGo(content, filePath, lang, parser);
+    return extractGo(content, filePath, lang, parser, knownFunctions);
   }
 
   return null;
