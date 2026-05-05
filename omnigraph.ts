@@ -215,6 +215,7 @@ async function main() {
 
       const imports = down.filter(e => e.type === "imports").map(e => e.to_id);
       const usesInput = down.filter(e => e.type === "uses_input").map(e => e.to_id);
+      const sharesDep = down.filter(e => e.type === "shares_dep").map(e => e.to_id);
       const usesColors = down.filter(e => e.type === "uses_colors").map(e => e.to_id);
       const refsSecrets = down.filter(e => e.type === "references_secrets").map(e => e.to_id);
       const refsGenerated = down.filter(e => e.type === "references_generated").map(e => e.to_id);
@@ -234,6 +235,7 @@ async function main() {
       console.log(`\n## ${target}`);
       if (imports.length) console.log(`↓ imports: ${imports.join(", ")}`);
       if (usesInput.length) console.log(`↓ uses_input: ${usesInput.join(", ")}`);
+      if (sharesDep.length) console.log(`🔗 shares_dep: ${sharesDep.join(", ")}`);
       if (usesColors.length) console.log(`↓ uses_colors: ${usesColors.join(", ")}`);
       if (refsSecrets.length) console.log(`↓ refs_secrets: ${refsSecrets.join(", ")}`);
       if (refsGenerated.length) console.log(`↓ refs_generated: ${refsGenerated.join(", ")}`);

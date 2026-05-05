@@ -1,5 +1,6 @@
 import { AuthService } from "./auth";
 import { Config } from "./config";
+import express from "express";
 
 export class App {
   private auth: AuthService;

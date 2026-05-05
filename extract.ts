@@ -150,6 +150,34 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
     console.log(`Scanned ${scannedCount} files`);
   }
 
+  const allNodes = db.getAllNodes();
+  const allEdges = db.getAllEdges();
+  const fileToInputs = new Map<string, string[]>();
+  for (const e of allEdges) {
+    if (e.type === "uses_input" && (e.from_id.endsWith(".ts") || e.from_id.endsWith(".js") || e.from_id.endsWith(".py") || e.from_id.endsWith(".rs") || e.from_id.endsWith(".go") || e.from_id.endsWith(".nix"))) {
+      if (!fileToInputs.has(e.from_id)) fileToInputs.set(e.from_id, []);
+      fileToInputs.get(e.from_id)!.push(e.to_id);
+    }
+  }
+
+  const sharedDeps = new Map<string, string[]>();
+  for (const [file, inputs] of fileToInputs) {
+    for (const input of inputs) {
+      if (!sharedDeps.has(input)) sharedDeps.set(input, []);
+      sharedDeps.get(input)!.push(file);
+    }
+  }
+
+  for (const [input, files] of sharedDeps) {
+    if (files.length >= 2) {
+      for (let i = 0; i < files.length; i++) {
+        for (let j = i + 1; j < files.length; j++) {
+          db.insertEdge({ from_id: files[i], to_id: files[j], type: "shares_dep", confidence: "inferred" });
+        }
+      }
+    }
+  }
+
   if (config.memory) {
     const memResult = extractMemory(projectPath, config.memory, config.mappings);
     for (const node of memResult.nodes) {
