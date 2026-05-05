@@ -481,8 +481,26 @@ function extractTsJs(
     edges.push({ from_id: filePath, to_id: callId, type: "calls", confidence: "auto" });
   }
 
+  const concepts: ExtractedConcept[] = [];
+  for (const fn of result.functions) {
+    const nodeId = fn.parent ? `${filePath}:${fn.parent}.${fn.name}` : `${filePath}:${fn.name}`;
+    concepts.push({ node_id: nodeId, kind: "function", name: fn.name, file_path: filePath, line_number: fn.row + 1, snippet: fn.text });
+  }
+  for (const cls of result.classes) {
+    const classId = `${filePath}:${cls.name}`;
+    concepts.push({ node_id: classId, kind: "class", name: cls.name, file_path: filePath, line_number: cls.row + 1 });
+  }
+  for (const iface of result.interfaces) {
+    const ifaceId = `${filePath}:${iface.name}`;
+    concepts.push({ node_id: ifaceId, kind: "interface", name: iface.name, file_path: filePath, line_number: iface.row + 1 });
+  }
+  for (const ta of result.typeAliases) {
+    const taId = `${filePath}:${ta.name}`;
+    concepts.push({ node_id: taId, kind: "type", name: ta.name, file_path: filePath, line_number: ta.row + 1 });
+  }
+
   tree.delete();
-  return { nodes, edges };
+  return { nodes, edges, concepts };
 }
 
 interface PyWalkResult {
@@ -643,8 +661,18 @@ function extractPython(
     edges.push({ from_id: filePath, to_id: callId, type: "calls", confidence: "auto" });
   }
 
+  const concepts: ExtractedConcept[] = [];
+  for (const fn of result.functions) {
+    const nodeId = fn.parent ? `${filePath}:${fn.parent}.${fn.name}` : `${filePath}:${fn.name}`;
+    concepts.push({ node_id: nodeId, kind: "function", name: fn.name, file_path: filePath, line_number: fn.row + 1 });
+  }
+  for (const cls of result.classes) {
+    const classId = `${filePath}:${cls.name}`;
+    concepts.push({ node_id: classId, kind: "class", name: cls.name, file_path: filePath, line_number: cls.row + 1 });
+  }
+
   tree.delete();
-  return { nodes, edges };
+  return { nodes, edges, concepts };
 }
 
 interface RsWalkResult {

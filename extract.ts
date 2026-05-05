@@ -126,6 +126,11 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
         for (const edge of result.edges) {
           db.insertEdge(edge);
         }
+        if (result.concepts) {
+          for (const concept of result.concepts) {
+            db.insertConcept(concept);
+          }
+        }
       } catch {
       }
     }

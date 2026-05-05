@@ -14,9 +14,19 @@ export interface ExtractedEdge {
   confidence: string;
 }
 
+export interface ExtractedConcept {
+  node_id: string;
+  kind: string;
+  name: string;
+  file_path?: string;
+  line_number?: number;
+  snippet?: string;
+}
+
 export interface ExtractResult {
   nodes: ExtractedNode[];
   edges: ExtractedEdge[];
+  concepts?: ExtractedConcept[];
 }
 
 interface PatternDef {

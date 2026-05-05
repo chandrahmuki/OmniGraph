@@ -25,6 +25,7 @@ Usage: omnigraph <command>
 Commands:
   build    Scan project, build DB and generate HTML
   query    Search the DB (nodes, annotations, lesson items)
+  search   Search concepts (functions, classes, structs, types)
   check    Pre-edit check for a file (dependencies, sessions, lessons)
   impact   Show full blast radius of changing a file (transitive reverse deps)
   path     Find shortest dependency path between two nodes
@@ -36,6 +37,8 @@ Examples:
   omnigraph build
   omnigraph build --incremental
   omnigraph query flake
+  omnigraph search handleAuth
+  omnigraph search --kind function
   omnigraph check modules/niri.nix
   omnigraph impact modules/niri.nix
   omnigraph path modules/niri.nix modules/terminal.nix
@@ -143,6 +146,47 @@ async function main() {
           const nodeLabel = node ? node.label : ann.node_id;
           console.log(`  ${ann.key}=${ann.value} -> ${nodeLabel}`);
         }
+      }
+
+      db.close();
+      break;
+    }
+
+    case "search": {
+      const fs = require("node:fs");
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+      const searchArgs = args.slice(1);
+      const term = searchArgs.find(a => !a.startsWith("--"));
+      const kindFilter = searchArgs.find(a => a.startsWith("--kind="))?.replace("--kind=", "");
+      if (!term) {
+        console.log("Usage: omnigraph search <term> [--kind=function|class|struct|interface|type]");
+        process.exit(1);
+      }
+      const db = new GraphDB(dbPath);
+      const results = db.searchConcepts(term, kindFilter);
+
+      console.log(`\n## Search: "${term}"${kindFilter ? ` (kind: ${kindFilter})` : ""}\n`);
+      console.log(`Found ${results.length} concept(s):\n`);
+
+      const grouped: Record<string, any[]> = {};
+      for (const r of results) {
+        if (!grouped[r.kind]) grouped[r.kind] = [];
+        grouped[r.kind].push(r);
+      }
+
+      for (const [kind, items] of Object.entries(grouped)) {
+        console.log(`### ${kind} (${items.length})`);
+        for (const item of items.slice(0, 20)) {
+          const loc = item.file_path ? `${item.file_path}` : "";
+          const line = item.line_number ? `:${item.line_number}` : "";
+          const snippet = item.snippet ? ` — ${item.snippet.slice(0, 80)}` : "";
+          console.log(`  ${item.name} → ${loc}${line}${snippet}`);
+        }
+        if (items.length > 20) console.log(`  ... and ${items.length - 20} more`);
+        console.log("");
       }
 
       db.close();

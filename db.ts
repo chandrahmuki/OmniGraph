@@ -43,6 +43,19 @@ export class GraphDB {
         value TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_annotations_node ON annotations(node_id);
+
+      CREATE TABLE IF NOT EXISTS concepts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        node_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        file_path TEXT,
+        line_number INTEGER,
+        snippet TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_concepts_name ON concepts(name);
+      CREATE INDEX IF NOT EXISTS idx_concepts_kind ON concepts(kind);
+      CREATE INDEX IF NOT EXISTS idx_concepts_node ON concepts(node_id);
     `);
 
     try {
@@ -71,6 +84,35 @@ export class GraphDB {
       `INSERT INTO annotations (node_id, key, value) VALUES (?, ?, ?)`
     );
     stmt.run(ann.node_id, ann.key, ann.value);
+  }
+
+  insertConcept(concept: { node_id: string; kind: string; name: string; file_path?: string; line_number?: number; snippet?: string }) {
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO concepts (node_id, kind, name, file_path, line_number, snippet)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    stmt.run(concept.node_id, concept.kind, concept.name, concept.file_path || null, concept.line_number || null, concept.snippet || null);
+  }
+
+  searchConcepts(term: string, kindFilter?: string): any[] {
+    const safeTerm = `%${term.toLowerCase()}%`;
+    let query = `
+      SELECT c.*, n.type as node_type, n.label as node_label
+      FROM concepts c
+      LEFT JOIN nodes n ON c.node_id = n.id
+      WHERE LOWER(c.name) LIKE ?
+    `;
+    const params: any[] = [safeTerm];
+    if (kindFilter) {
+      query += ` AND c.kind = ?`;
+      params.push(kindFilter);
+    }
+    query += ` ORDER BY c.kind, c.name`;
+    return this.db.query(query).all(...params) as any[];
+  }
+
+  getConceptsForNode(nodeId: string): any[] {
+    return this.db.query("SELECT * FROM concepts WHERE node_id = ?").all(nodeId) as any[];
   }
 
   getNodeById(id: string): any | null {
@@ -127,7 +169,7 @@ export class GraphDB {
   }
 
   clear() {
-    this.db.exec("DELETE FROM nodes; DELETE FROM edges; DELETE FROM annotations;");
+    this.db.exec("DELETE FROM nodes; DELETE FROM edges; DELETE FROM annotations; DELETE FROM concepts;");
   }
 
   close() {
