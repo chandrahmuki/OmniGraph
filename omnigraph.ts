@@ -216,7 +216,10 @@ async function main() {
 
       const imports = down.filter(e => e.type === "imports").map(e => e.to_id);
       const usesInput = down.filter(e => e.type === "uses_input").map(e => e.to_id);
-      const sharesDep = down.filter(e => e.type === "shares_dep").map(e => e.to_id);
+      const sharesDep = down.filter(e => e.type === "shares_dep").map(e => {
+        const hubNode = nodeMap.get(e.to_id);
+        return hubNode ? hubNode.label : e.to_id;
+      });
       const usesColors = down.filter(e => e.type === "uses_colors").map(e => e.to_id);
       const refsSecrets = down.filter(e => e.type === "references_secrets").map(e => e.to_id);
       const refsGenerated = down.filter(e => e.type === "references_generated").map(e => e.to_id);
@@ -605,7 +608,7 @@ async function main() {
       });
 
       console.log("\n## Hotspots\n");
-      const errorPattern = /error|crash|fail|bug|fix|block/i;
+      const errorPattern = /\b(crash|failure|broken|segfault|panic|OOM|unreachable|fatal)\b/i;
 
       for (const target of sorted.slice(0, 15)) {
         const sCount = sessionModCount.get(target) || 0;

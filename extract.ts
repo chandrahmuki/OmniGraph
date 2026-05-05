@@ -170,10 +170,10 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
 
   for (const [input, files] of sharedDeps) {
     if (files.length >= 2) {
-      for (let i = 0; i < files.length; i++) {
-        for (let j = i + 1; j < files.length; j++) {
-          db.insertEdge({ from_id: files[i], to_id: files[j], type: "shares_dep", confidence: "inferred" });
-        }
+      const hubId = `_shared_dep:${input}`;
+      db.insertNode({ id: hubId, type: "shared_dependency", label: input });
+      for (const file of files) {
+        db.insertEdge({ from_id: file, to_id: hubId, type: "shares_dep", confidence: "inferred" });
       }
     }
   }
