@@ -6,6 +6,15 @@ interface MemoryConfig {
   skills_dir: string;
 }
 
+interface MappingsConfig {
+  concepts?: Record<string, string>;
+  programs?: Record<string, string>;
+  auto_discover?: {
+    dirs?: string[];
+    extensions?: string[];
+  };
+}
+
 interface ExtractedAnnotation {
   node_id: string;
   key: string;
@@ -22,108 +31,6 @@ interface LessonItem {
   createdAt: string;
 }
 
-const MODULE_NAMES: Record<string, string> = {
-  "ai\\.nix": "modules/ai.nix",
-  "backup\\.nix": "modules/backup.nix",
-  "bluetooth\\.nix": "modules/bluetooth.nix",
-  "btop\\.nix": "modules/btop.nix",
-  "dbus\\.nix": "modules/dbus.nix",
-  "direnv\\.nix": "modules/direnv.nix",
-  "discord\\.nix": "modules/discord.nix",
-  "font\\.nix": "modules/font.nix",
-  "gaming\\.nix": "modules/gaming.nix",
-  "git\\.nix": "modules/git.nix",
-  "irc\\.nix": "modules/irc.nix",
-  "lutris\\.nix": "modules/lutris.nix",
-  "media\\.nix": "modules/media.nix",
-  "microfetch\\.nix": "modules/microfetch.nix",
-  "nautilus\\.nix": "modules/nautilus.nix",
-  "neovim\\.nix": "modules/neovim.nix",
-  "nh\\.nix": "modules/nh.nix",
-  "niri\\.nix": "modules/niri.nix",
-  "noctalia\\.nix": "modules/noctalia.nix",
-  "notifications\\.nix": "modules/notifications.nix",
-  "obsidian\\.nix": "modules/obsidian.nix",
-  "parsec\\.nix": "modules/parsec.nix",
-  "pdf\\.nix": "modules/pdf.nix",
-  "performance-tuning\\.nix": "modules/performance-tuning.nix",
-  "secrets\\.nix": "modules/secrets.nix",
-  "tealdeer\\.nix": "modules/tealdeer.nix",
-  "terminal\\.nix": "modules/terminal.nix",
-  "theme\\.nix": "modules/theme.nix",
-  "utils\\.nix": "modules/utils.nix",
-  "vscode\\.nix": "modules/vscode.nix",
-  "walker\\.nix": "modules/walker.nix",
-  "xdg\\.nix": "modules/xdg.nix",
-  "yazi\\.nix": "modules/yazi.nix",
-  "zellij\\.nix": "modules/zellij.nix",
-  "zen-browser\\.nix": "modules/zen-browser.nix",
-};
-
-const CONCEPT_TO_MODULE: Record<string, string> = {
-  "flake.nix": "flake.nix",
-  "home.nix": "home.nix",
-  "overlays.nix": "overlays.nix",
-  "hardware-configuration": "hosts/system/hardware-configuration.nix",
-  "lib/colors": "lib/colors.nix",
-  "colors.nix": "lib/colors.nix",
-  overlay: "overlays.nix",
-  registry: "flake.nix",
-  cache: "modules/nh.nix",
-  bun: "modules/ai.nix",
-  deno: "modules/ai.nix",
-  omnigraph: "modules/ai.nix",
-};
-
-const PROGRAM_TO_MODULE: Record<string, string> = {
-  zellij: "modules/zellij.nix",
-  niri: "modules/niri.nix",
-  neovim: "modules/neovim.nix",
-  nvim: "modules/neovim.nix",
-  noctalia: "modules/noctalia.nix",
-  walker: "modules/walker.nix",
-  "zen-browser": "modules/zen-browser.nix",
-  sops: "modules/secrets.nix",
-  btrbk: "modules/backup.nix",
-  mpv: "modules/media.nix",
-  "yt-dlp": "modules/media.nix",
-  discord: "modules/discord.nix",
-  opencode: "modules/ai.nix",
-  "claude-code": "modules/ai.nix",
-  "gemini-cli": "modules/ai.nix",
-  gaming: "modules/gaming.nix",
-  steam: "modules/gaming.nix",
-  lutris: "modules/gaming.nix",
-  btop: "modules/btop.nix",
-  git: "modules/git.nix",
-  fish: "modules/terminal.nix",
-  foot: "modules/terminal.nix",
-  starship: "modules/terminal.nix",
-  yazi: "modules/yazi.nix",
-  zathura: "modules/pdf.nix",
-  thunar: "modules/nautilus.nix",
-  nautilus: "modules/nautilus.nix",
-  tealdeer: "modules/tealdeer.nix",
-  "gpu-screen-recorder": "modules/gaming.nix",
-  lact: "modules/gaming.nix",
-  dbus: "modules/dbus.nix",
-  "dbus-broker": "modules/dbus.nix",
-  font: "modules/font.nix",
-  obsidian: "modules/obsidian.nix",
-  vscode: "modules/vscode.nix",
-  nh: "modules/nh.nix",
-  direnv: "modules/direnv.nix",
-  bluetooth: "modules/bluetooth.nix",
-  notifications: "modules/notifications.nix",
-  theme: "modules/theme.nix",
-  xdg: "modules/xdg.nix",
-  backup: "modules/backup.nix",
-  utils: "modules/utils.nix",
-  irc: "modules/irc.nix",
-  parsec: "modules/parsec.nix",
-  microfetch: "modules/microfetch.nix",
-};
-
 const TRANSVERSE_PATTERNS = [
   /\b(build|cache|overlay|config|crash|fix|migration|install|override|rollback|update|error|block)\b/gi,
 ];
@@ -136,26 +43,30 @@ const ITEM_DATE_PATTERN = /^-\s+(\d{4}-\d{2}-\d{2}):\s+(.+)$/;
 const ITEM_ALWAYS_PATTERN = /^-\s+Toujours\s*:\s+(.+)$/;
 const ITEM_BARE_PATTERN = /^-\s+(.+)$/;
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-}
-
-function buildAllMappings(projectPath: string): Record<string, string> {
+function buildAllMappings(projectPath: string, mappingsConfig?: MappingsConfig): Record<string, string> {
   const fs = require("node:fs");
   const path = require("node:path");
-  const mappings: Record<string, string> = { ...PROGRAM_TO_MODULE, ...CONCEPT_TO_MODULE };
+  const mappings: Record<string, string> = {};
 
-  const modulesDir = path.join(projectPath, "modules");
-  if (fs.existsSync(modulesDir)) {
-    for (const file of fs.readdirSync(modulesDir)) {
-      if (file.endsWith(".nix")) {
-        const name = file.replace(".nix", "");
+  if (mappingsConfig?.concepts) {
+    Object.assign(mappings, mappingsConfig.concepts);
+  }
+  if (mappingsConfig?.programs) {
+    Object.assign(mappings, mappingsConfig.programs);
+  }
+
+  const autoDirs = mappingsConfig?.auto_discover?.dirs || ["modules", "src", "lib"];
+  const autoExts = mappingsConfig?.auto_discover?.extensions || [".nix", ".ts", ".py", ".rs", ".go"];
+
+  for (const dir of autoDirs) {
+    const fullDir = path.join(projectPath, dir);
+    if (!fs.existsSync(fullDir)) continue;
+    for (const file of fs.readdirSync(fullDir)) {
+      const ext = "." + file.split(".").pop();
+      if (autoExts.includes(ext)) {
+        const name = file.replace(/\.[^.]+$/, "");
         if (!mappings[name]) {
-          mappings[name] = `modules/${file}`;
+          mappings[name] = `${dir}/${file}`;
         }
       }
     }
@@ -164,17 +75,17 @@ function buildAllMappings(projectPath: string): Record<string, string> {
   return mappings;
 }
 
-function matchTextToModules(
+function matchTextToConcepts(
   text: string,
   allMappings: Record<string, string>,
-): { modules: Set<string>; tags: Set<string> } {
-  const modules = new Set<string>();
+): { targets: Set<string>; tags: Set<string> } {
+  const targets = new Set<string>();
   const tags = new Set<string>();
 
   for (const [term, modPath] of Object.entries(allMappings)) {
     const regex = new RegExp(`\\b${term.replace(/[-]/g, "[-\\s]")}\\b`, "i");
     if (regex.test(text)) {
-      modules.add(modPath);
+      targets.add(modPath);
       tags.add(term.toLowerCase());
     }
   }
@@ -187,7 +98,7 @@ function matchTextToModules(
     }
   }
 
-  return { modules, tags };
+  return { targets, tags };
 }
 
 function parseLessonItems(content: string): LessonItem[] {
@@ -217,14 +128,14 @@ function parseLessonItems(content: string): LessonItem[] {
   return items;
 }
 
-function parseSummary(content: string, sessionId: string): {
-  modulesModified: string[];
+function parseSummary(content: string, sessionId: string, allMappings: Record<string, string>): {
+  targetsModified: string[];
   lessonsProduced: string[];
   skillsProduced: string[];
   inputsReferenced: string[];
   timestamp: string | null;
 } {
-  const modulesModified = new Set<string>();
+  const targetsModified = new Set<string>();
   const lessonsProduced = new Set<string>();
   const skillsProduced = new Set<string>();
   const inputsReferenced = new Set<string>();
@@ -237,30 +148,16 @@ function parseSummary(content: string, sessionId: string): {
 
   const text = content;
 
-  const explicitPathPattern = /(?:modules\/[\w-]+\.nix|(?:hosts\/system\/)?(?:default|hardware-configuration)\.nix|flake\.nix|home\.nix|overlays\.nix|lib\/colors\.nix)/g;
+  const explicitPathPattern = /(?:modules\/[\w-]+\.\w+|(?:hosts\/system\/)?(?:default|hardware-configuration)\.\w+|flake\.\w+|home\.\w+|overlays\.\w+|lib\/colors\.\w+|src\/[\w/-]+\.\w+)/g;
   for (const m of text.matchAll(explicitPathPattern)) {
-    modulesModified.add(m[0]);
+    targetsModified.add(m[0]);
   }
 
-  for (const [pattern, modPath] of Object.entries(MODULE_NAMES)) {
-    const regex = new RegExp(pattern, "g");
-    if (regex.test(text)) {
-      modulesModified.add(modPath);
-    }
-  }
-
-  for (const [name, modPath] of Object.entries(PROGRAM_TO_MODULE)) {
+  for (const [name, modPath] of Object.entries(allMappings)) {
+    if (name.length < 3) continue;
     const regex = new RegExp(`\\b${name.replace(/[-]/g, "[-\\s]")}\\b`, "i");
     if (regex.test(text)) {
-      modulesModified.add(modPath);
-    }
-  }
-
-  for (const [concept, modPath] of Object.entries(CONCEPT_TO_MODULE)) {
-    if (concept.length < 4) continue;
-    const regex = new RegExp(`\\b${concept.replace(/[-]/g, "[-\\s]")}\\b`, "i");
-    if (regex.test(text)) {
-      modulesModified.add(modPath);
+      targetsModified.add(modPath);
     }
   }
 
@@ -271,39 +168,23 @@ function parseSummary(content: string, sessionId: string): {
   for (const m of text.matchAll(LESSON_PATTERN)) {
     lessonsProduced.add(m[1]);
   }
-  if (text.match(/lessons?\s*(?:learned|system|categorized|created|updated)/i)) {
-    for (const l of ["neovim", "nix-flakes", "nix-build", "nix-modules", "git-workflow", "nixos-store", "dev-tools"]) {
-      if (text.toLowerCase().includes(l.split("-").pop()!)) {
-        lessonsProduced.add(l);
-      }
-    }
-  }
 
   for (const m of text.matchAll(SKILL_PATTERN)) {
     skillsProduced.add(m[1]);
-  }
-  if (text.match(/skill/i) && !skillsProduced.size) {
-    if (text.match(/snapshot/i)) skillsProduced.add("snapshot");
-    if (text.match(/project-map/i)) skillsProduced.add("project-map");
   }
 
   const commitPattern = /`[a-f0-9]{6,}`\s+\w+(?:\([\w-]+\))?:\s+(.+)/g;
   for (const m of text.matchAll(commitPattern)) {
     const msg = m[1];
-    for (const [name, modPath] of Object.entries(PROGRAM_TO_MODULE)) {
-      if (msg.toLowerCase().includes(name.toLowerCase())) {
-        modulesModified.add(modPath);
-      }
-    }
-    for (const [concept, modPath] of Object.entries(CONCEPT_TO_MODULE)) {
-      if (concept.length >= 4 && msg.toLowerCase().includes(concept.toLowerCase())) {
-        modulesModified.add(modPath);
+    for (const [name, modPath] of Object.entries(allMappings)) {
+      if (name.length >= 3 && msg.toLowerCase().includes(name.toLowerCase())) {
+        targetsModified.add(modPath);
       }
     }
   }
 
   return {
-    modulesModified: [...modulesModified],
+    targetsModified: [...targetsModified],
     lessonsProduced: [...lessonsProduced],
     skillsProduced: [...skillsProduced],
     inputsReferenced: [...inputsReferenced],
@@ -314,6 +195,7 @@ function parseSummary(content: string, sessionId: string): {
 export function extractMemory(
   projectPath: string,
   config: MemoryConfig,
+  mappingsConfig?: MappingsConfig,
 ): ExtractResultWithAnnotations {
   const fs = require("node:fs");
   const path = require("node:path");
@@ -321,7 +203,7 @@ export function extractMemory(
   const edges: ExtractedEdge[] = [];
   const annotations: ExtractedAnnotation[] = [];
 
-  const allMappings = buildAllMappings(projectPath);
+  const allMappings = buildAllMappings(projectPath, mappingsConfig);
 
   function addNode(id: string, type: string, label: string, filePath?: string, lineNumber?: number, createdAt?: string) {
     if (!nodes.find(n => n.id === id)) {
@@ -366,11 +248,11 @@ export function extractMemory(
 
       try {
         const content = fs.readFileSync(summaryPath, "utf-8");
-        const parsed = parseSummary(content, sessionId);
+        const parsed = parseSummary(content, sessionId, allMappings);
 
         addNode(sessionId, "session", sessionId, `memory/sessions/${entry}/summary.md`, 0, parsed.timestamp || dateFromId);
 
-        for (const mod of parsed.modulesModified) {
+        for (const mod of parsed.targetsModified) {
           addNode(mod, "file", mod.split("/").pop() || mod, mod);
           addEdge(sessionId, mod, "session_modified");
         }
@@ -403,10 +285,10 @@ export function extractMemory(
       try {
         const content = fs.readFileSync(lessonPath, "utf-8");
 
-        const { modules: catModules, tags: catTags } = matchTextToModules(content, allMappings);
-        for (const mod of catModules) {
-          addNode(mod, "file", mod.split("/").pop() || mod, mod);
-          addEdge(lessonId, mod, "lesson_applies_to");
+        const { targets: catTargets, tags: catTags } = matchTextToConcepts(content, allMappings);
+        for (const target of catTargets) {
+          addNode(target, "file", target.split("/").pop() || target, target);
+          addEdge(lessonId, target, "lesson_applies_to");
         }
         for (const tag of catTags) {
           addAnnotation(lessonId, "tag", tag);
@@ -419,10 +301,10 @@ export function extractMemory(
 
           addEdge(lessonId, itemId, "lesson_contains");
 
-          const { modules: itemModules, tags: itemTags } = matchTextToModules(item.text, allMappings);
-          for (const mod of itemModules) {
-            addNode(mod, "file", mod.split("/").pop() || mod, mod);
-            addEdge(itemId, mod, "lesson_applies_to");
+          const { targets: itemTargets, tags: itemTags } = matchTextToConcepts(item.text, allMappings);
+          for (const target of itemTargets) {
+            addNode(target, "file", target.split("/").pop() || target, target);
+            addEdge(itemId, target, "lesson_applies_to");
           }
           for (const tag of itemTags) {
             addAnnotation(itemId, "tag", tag);

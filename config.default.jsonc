@@ -44,5 +44,11 @@
     "sessions_dir": "memory/sessions",
     "lessons_dir": "memory/lessons",
     "skills_dir": "memory/skills"
+  },
+  "mappings": {
+    "auto_discover": {
+      "dirs": ["modules", "src", "lib"],
+      "extensions": [".nix", ".ts", ".py", ".rs", ".go"]
+    }
   }
 }

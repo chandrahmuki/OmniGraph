@@ -12,6 +12,14 @@ export interface Config {
     lessons_dir: string;
     skills_dir: string;
   };
+  mappings?: {
+    concepts?: Record<string, string>;
+    programs?: Record<string, string>;
+    auto_discover?: {
+      dirs?: string[];
+      extensions?: string[];
+    };
+  };
 }
 
 export function computeHash(content: string): string {
@@ -143,7 +151,7 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
   }
 
   if (config.memory) {
-    const memResult = extractMemory(projectPath, config.memory);
+    const memResult = extractMemory(projectPath, config.memory, config.mappings);
     for (const node of memResult.nodes) {
       db.insertNode(node);
     }
