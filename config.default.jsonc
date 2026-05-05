@@ -12,7 +12,10 @@
     "lesson_item": {"color": "#16a34a", "label": "Item de lesson"},
     "skill":    {"color": "#ec4899", "label": "Skill"},
     "error":    {"color": "#ef4444", "label": "Erreur"},
-    "concept":  {"color": "#8b5cf6", "label": "Concept"}
+    "concept":  {"color": "#8b5cf6", "label": "Concept"},
+    "function": {"color": "#f97316", "label": "Fonction"},
+    "class":    {"color": "#6366f1", "label": "Classe"},
+    "interface":{"color": "#ec4899", "label": "Interface"}
   },
 "relation_types": {
     "imports":              {"label": "importe",          "color": "#3b82f6"},
@@ -33,7 +36,9 @@
     "links_to":             {"label": "lien vers",        "color": "#8b949e"},
     "caused":               {"label": "a cause",           "color": "#ef4444"},
     "learned_from":         {"label": "apris de",          "color": "#22c55e"},
-    "mentions":             {"label": "mentionne",         "color": "#8b949e"}
+    "mentions":             {"label": "mentionne",         "color": "#8b949e"},
+    "defines":              {"label": "definit",          "color": "#10b981"},
+    "calls":                {"label": "appelle",          "color": "#f97316"}
   },
   "memory": {
     "sessions_dir": "memory/sessions",

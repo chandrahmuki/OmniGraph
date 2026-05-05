@@ -270,6 +270,221 @@ function extractNix(
   return { nodes, edges };
 }
 
+interface TsWalkResult {
+  functions: { name: string; row: number; text: string; parent?: string }[];
+  classes: { name: string; row: number; methods: string[] }[];
+  interfaces: { name: string; row: number }[];
+  typeAliases: { name: string; row: number }[];
+  imports: { source: string; names: string[]; row: number; isRelative: boolean }[];
+  exports: { names: string[]; row: number }[];
+  calls: { callee: string; row: number }[];
+}
+
+function walkTsTree(node: any, result: TsWalkResult, parentClass?: string): void {
+  if (node.type === "function_declaration" || node.type === "function") {
+    const nameNode = node.childForFieldName("name");
+    if (nameNode) {
+      result.functions.push({ name: nameNode.text, row: node.startPosition.row, text: node.text.slice(0, 80), parent: parentClass });
+    }
+  }
+
+  if (node.type === "method_definition" || node.type === "method") {
+    const nameNode = node.childForFieldName("name");
+    if (nameNode) {
+      result.functions.push({ name: nameNode.text, row: node.startPosition.row, text: node.text.slice(0, 80), parent: parentClass });
+    }
+  }
+
+  if (node.type === "class_declaration" || node.type === "class") {
+    const nameNode = node.childForFieldName("name");
+    if (nameNode) {
+      const methods: string[] = [];
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i);
+        if (child.type === "method_definition" || child.type === "method" || child.type === "class_body") {
+          for (let j = 0; j < child.childCount; j++) {
+            const grandchild = child.child(j);
+            if (grandchild.type === "method_definition" || grandchild.type === "method") {
+              const mName = grandchild.childForFieldName("name");
+              if (mName) methods.push(mName.text);
+            }
+          }
+        }
+      }
+      result.classes.push({ name: nameNode.text, row: node.startPosition.row, methods });
+    }
+  }
+
+  if (node.type === "interface_declaration") {
+    const nameNode = node.childForFieldName("name");
+    if (nameNode) {
+      result.interfaces.push({ name: nameNode.text, row: node.startPosition.row });
+    }
+  }
+
+  if (node.type === "type_alias_declaration" || node.type === "type_alias") {
+    const nameNode = node.childForFieldName("name");
+    if (nameNode) {
+      result.typeAliases.push({ name: nameNode.text, row: node.startPosition.row });
+    }
+  }
+
+  if (node.type === "import_statement" || node.type === "import_declaration") {
+    const sourceNode = node.childForFieldName("source");
+    if (sourceNode) {
+      const source = sourceNode.text.replace(/['"]/g, "");
+      const names: string[] = [];
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i);
+        if (child.type === "import_clause" || child.type === "named_imports") {
+          for (let j = 0; j < child.childCount; j++) {
+            const gc = child.child(j);
+            if (gc.type === "identifier" || gc.type === "import_specifier") {
+              const idName = gc.childForFieldName("name") || gc;
+              if (idName && idName.text) names.push(idName.text);
+            }
+          }
+        }
+        if (child.type === "identifier") {
+          names.push(child.text);
+        }
+      }
+      result.imports.push({ source, names, row: node.startPosition.row, isRelative: source.startsWith(".") });
+    }
+  }
+
+  if (node.type === "export_statement" || node.type === "export_declaration") {
+    const names: string[] = [];
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child.type === "export_clause") {
+        for (let j = 0; j < child.childCount; j++) {
+          const gc = child.child(j);
+          if (gc.type === "export_specifier") {
+            const nameNode = gc.childForFieldName("name") || gc;
+            if (nameNode && nameNode.text) names.push(nameNode.text);
+          }
+        }
+      }
+      if (child.type === "function_declaration" || child.type === "class_declaration") {
+        const nameNode = child.childForFieldName("name");
+        if (nameNode) names.push(nameNode.text);
+      }
+    }
+    if (names.length > 0) {
+      result.exports.push({ names, row: node.startPosition.row });
+    }
+  }
+
+  if (node.type === "call_expression") {
+    const funcNode = node.childForFieldName("function") || node.child(0);
+    if (funcNode && funcNode.type === "identifier") {
+      result.calls.push({ callee: funcNode.text, row: node.startPosition.row });
+    }
+    if (funcNode && funcNode.type === "member_expression") {
+      result.calls.push({ callee: funcNode.text, row: node.startPosition.row });
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    const childParent = (node.type === "class_declaration" || node.type === "class") && child.type === "class_body"
+      ? parentClass || (node.childForFieldName("name")?.text)
+      : parentClass;
+    walkTsTree(child, result, childParent);
+  }
+}
+
+function extractTsJs(
+  content: string,
+  filePath: string,
+  lang: any,
+  parser: any,
+): ExtractResult {
+  const nodes: ExtractedNode[] = [];
+  const edges: ExtractedEdge[] = [];
+  const seenNodes = new Set<string>();
+
+  function addNode(id: string, type: string, label: string, fp?: string, line?: number) {
+    if (!seenNodes.has(id)) {
+      seenNodes.add(id);
+      nodes.push({ id, type, label, file_path: fp || filePath, line_number: line || 0 });
+    }
+  }
+
+  addNode(filePath, "file", filePath.split("/").pop() || filePath, filePath);
+
+  parser.setLanguage(lang);
+  const tree = parser.parse(content);
+  const result: TsWalkResult = {
+    functions: [], classes: [], interfaces: [], typeAliases: [],
+    imports: [], exports: [], calls: [],
+  };
+  walkTsTree(tree.rootNode, result);
+
+  for (const fn of result.functions) {
+    const nodeId = fn.parent ? `${filePath}:${fn.parent}.${fn.name}` : `${filePath}:${fn.name}`;
+    addNode(nodeId, "function", fn.name, filePath, fn.row + 1);
+    edges.push({ from_id: filePath, to_id: nodeId, type: "defines", confidence: "auto" });
+    if (fn.parent) {
+      const classId = `${filePath}:${fn.parent}`;
+      addNode(classId, "class", fn.parent, filePath, 0);
+      edges.push({ from_id: classId, to_id: nodeId, type: "defines", confidence: "auto" });
+    }
+  }
+
+  for (const cls of result.classes) {
+    const classId = `${filePath}:${cls.name}`;
+    addNode(classId, "class", cls.name, filePath, cls.row + 1);
+    edges.push({ from_id: filePath, to_id: classId, type: "defines", confidence: "auto" });
+    for (const method of cls.methods) {
+      const methodId = `${filePath}:${cls.name}.${method}`;
+      addNode(methodId, "function", method, filePath, 0);
+      edges.push({ from_id: classId, to_id: methodId, type: "defines", confidence: "auto" });
+    }
+  }
+
+  for (const iface of result.interfaces) {
+    const ifaceId = `${filePath}:${iface.name}`;
+    addNode(ifaceId, "interface", iface.name, filePath, iface.row + 1);
+    edges.push({ from_id: filePath, to_id: ifaceId, type: "defines", confidence: "auto" });
+  }
+
+  for (const ta of result.typeAliases) {
+    const taId = `${filePath}:${ta.name}`;
+    addNode(taId, "concept", ta.name, filePath, ta.row + 1);
+    edges.push({ from_id: filePath, to_id: taId, type: "defines", confidence: "auto" });
+  }
+
+  for (const imp of result.imports) {
+    if (imp.isRelative) {
+      const resolved = resolveRelativePath(filePath, imp.source);
+      const resolvedWithExt = resolved.endsWith(".ts") ? resolved : resolved + ".ts";
+      addNode(resolvedWithExt, "file", resolvedWithExt.split("/").pop() || resolvedWithExt, resolvedWithExt);
+      edges.push({ from_id: filePath, to_id: resolvedWithExt, type: "imports", confidence: "auto" });
+      for (const name of imp.names) {
+        const nameId = `${resolvedWithExt}:${name}`;
+        addNode(nameId, "function", name, resolvedWithExt);
+        edges.push({ from_id: filePath, to_id: nameId, type: "uses_input", confidence: "auto" });
+      }
+    } else {
+      const pkgName = imp.source.startsWith("@") ? imp.source.split("/").slice(0, 2).join("/") : imp.source.split("/")[0];
+      const pkgId = `pkg.${pkgName}`;
+      addNode(pkgId, "input", pkgName);
+      edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "auto" });
+    }
+  }
+
+  for (const call of result.calls) {
+    const callId = `${filePath}:call:${call.callee}:${call.row}`;
+    addNode(callId, "function", `call:${call.callee}`, filePath, call.row + 1);
+    edges.push({ from_id: filePath, to_id: callId, type: "calls", confidence: "auto" });
+  }
+
+  tree.delete();
+  return { nodes, edges };
+}
+
 let ParserClass: any = null;
 let LanguageClass: any = null;
 let parserReady = false;
@@ -303,6 +518,11 @@ export async function extractWithTreeSitter(
   if (ext === ".nix") {
     const parser = new ParserClass();
     return extractNix(content, filePath, lang, parser);
+  }
+
+  if (ext === ".ts" || ext === ".tsx" || ext === ".js" || ext === ".jsx") {
+    const parser = new ParserClass();
+    return extractTsJs(content, filePath, lang, parser);
   }
 
   return null;
