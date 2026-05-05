@@ -276,7 +276,6 @@ export function extractMemory(
     }
   }
 
-  const errorFixMap = new Map<string, string>();
   const sessionsForErrors = new Map<string, string[]>();
 
   const sessionsDir2 = path.join(projectPath, config.sessions_dir);
@@ -308,7 +307,6 @@ export function extractMemory(
             const fixLabel = line.trim().slice(0, 120);
             addNode(fixId, "fix", fixLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
             addEdge(sessionId, fixId, "applied_fix");
-            errorFixMap.set(fixId, errorId);
           }
         }
       } catch {}

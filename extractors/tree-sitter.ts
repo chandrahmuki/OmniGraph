@@ -5,6 +5,8 @@ const path = require("node:path");
 
 const GRAMMARS_DIR = path.join(import.meta.dirname || __dirname, "../grammars");
 
+const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
+
 const EXT_TO_GRAMMAR: Record<string, string> = {
   ".nix": "tree-sitter-nix",
   ".ts": "tree-sitter-typescript",
@@ -125,7 +127,6 @@ function walkTree(node: any, result: WalkResult): void {
     result.interpolations.push({ text: node.text, row: node.startPosition.row });
   }
   if (node.type === "comment") {
-    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
     if (RATIONALE_PATTERN.test(node.text)) {
       result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
     }
@@ -489,7 +490,6 @@ function walkTsTree(node: any, result: TsWalkResult, parentClass?: string): void
   }
 
   if (node.type === "comment") {
-    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
     if (RATIONALE_PATTERN.test(node.text)) {
       result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
     }
@@ -710,7 +710,6 @@ function walkPyTree(node: any, result: PyWalkResult, parentClass?: string): void
   }
 
   if (node.type === "comment") {
-    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
     if (RATIONALE_PATTERN.test(node.text)) {
       result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
     }
@@ -914,7 +913,6 @@ function walkRsTree(node: any, result: RsWalkResult, currentImpl?: string): void
   }
 
   if (node.type === "line_comment" || node.type === "block_comment") {
-    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
     if (RATIONALE_PATTERN.test(node.text)) {
       result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
     }
@@ -1121,7 +1119,6 @@ function walkGoTree(node: any, result: GoWalkResult): void {
   }
 
   if (node.type === "comment") {
-    const RATIONALE_PATTERN = /\b(NOTE|WHY|HACK|TODO|FIXME|RATIONALE|DESIGN)\b[:\s]/i;
     if (RATIONALE_PATTERN.test(node.text)) {
       result.rationales.push({ text: node.text.trim(), row: node.startPosition.row, targetRow: node.startPosition.row });
     }
@@ -1240,12 +1237,8 @@ function findFileForFunction(callee: string, registry: FunctionRegistry, callerF
   if (registry.qualifiedNames.has(callee)) {
     return callee.split(":")[0];
   }
-  for (const qName of registry.qualifiedNames) {
-    const parts = qName.split(":");
-    const fnName = parts[1];
-    if (fnName === callee) {
-      return parts[0];
-    }
+  if (registry.nameToFile.has(callee)) {
+    return registry.nameToFile.get(callee)!;
   }
   return callerFile;
 }
@@ -1264,6 +1257,7 @@ function findCallerFunction(filePath: string, functions: { name: string; row: nu
 export interface FunctionRegistry {
   simpleNames: Set<string>;
   qualifiedNames: Set<string>;
+  nameToFile: Map<string, string>;
 }
 
 export async function buildFunctionRegistry(projectPath: string): Promise<FunctionRegistry> {
@@ -1271,6 +1265,7 @@ export async function buildFunctionRegistry(projectPath: string): Promise<Functi
   const path = require("node:path");
   const simpleNames = new Set<string>();
   const qualifiedNames = new Set<string>();
+  const nameToFile = new Map<string, string>();
 
   async function scanDir(dir: string) {
     if (!fs.existsSync(dir)) return;
@@ -1298,11 +1293,13 @@ export async function buildFunctionRegistry(projectPath: string): Promise<Functi
             walkTsTree(tree.rootNode, tsResult);
             for (const fn of tsResult.functions) {
               simpleNames.add(fn.name);
+              if (!nameToFile.has(fn.name)) nameToFile.set(fn.name, relativePath);
               const qId = fn.parent ? `${relativePath}:${fn.parent}.${fn.name}` : `${relativePath}:${fn.name}`;
               qualifiedNames.add(qId);
             }
             for (const cls of tsResult.classes) {
               simpleNames.add(cls.name);
+              if (!nameToFile.has(cls.name)) nameToFile.set(cls.name, relativePath);
               qualifiedNames.add(`${relativePath}:${cls.name}`);
             }
           } else if (ext === ".py") {
@@ -1310,11 +1307,13 @@ export async function buildFunctionRegistry(projectPath: string): Promise<Functi
             walkPyTree(tree.rootNode, pyResult);
             for (const fn of pyResult.functions) {
               simpleNames.add(fn.name);
+              if (!nameToFile.has(fn.name)) nameToFile.set(fn.name, relativePath);
               const qId = fn.parent ? `${relativePath}:${fn.parent}.${fn.name}` : `${relativePath}:${fn.name}`;
               qualifiedNames.add(qId);
             }
             for (const cls of pyResult.classes) {
               simpleNames.add(cls.name);
+              if (!nameToFile.has(cls.name)) nameToFile.set(cls.name, relativePath);
               qualifiedNames.add(`${relativePath}:${cls.name}`);
             }
           } else if (ext === ".rs") {
@@ -1322,11 +1321,13 @@ export async function buildFunctionRegistry(projectPath: string): Promise<Functi
             walkRsTree(tree.rootNode, rsResult);
             for (const fn of rsResult.functions) {
               simpleNames.add(fn.name);
+              if (!nameToFile.has(fn.name)) nameToFile.set(fn.name, relativePath);
               const qId = fn.parent ? `${relativePath}:${fn.parent}::${fn.name}` : `${relativePath}:${fn.name}`;
               qualifiedNames.add(qId);
             }
             for (const s of rsResult.structs) {
               simpleNames.add(s.name);
+              if (!nameToFile.has(s.name)) nameToFile.set(s.name, relativePath);
               qualifiedNames.add(`${relativePath}:${s.name}`);
             }
           } else if (ext === ".go") {
@@ -1334,11 +1335,13 @@ export async function buildFunctionRegistry(projectPath: string): Promise<Functi
             walkGoTree(tree.rootNode, goResult);
             for (const fn of goResult.functions) {
               simpleNames.add(fn.name);
+              if (!nameToFile.has(fn.name)) nameToFile.set(fn.name, relativePath);
               const qId = fn.receiver ? `${relativePath}:${fn.receiver}.${fn.name}` : `${relativePath}:${fn.name}`;
               qualifiedNames.add(qId);
             }
             for (const s of goResult.structs) {
               simpleNames.add(s.name);
+              if (!nameToFile.has(s.name)) nameToFile.set(s.name, relativePath);
               qualifiedNames.add(`${relativePath}:${s.name}`);
             }
           }
@@ -1349,7 +1352,7 @@ export async function buildFunctionRegistry(projectPath: string): Promise<Functi
   }
 
   await scanDir(projectPath);
-  return { simpleNames, qualifiedNames };
+  return { simpleNames, qualifiedNames, nameToFile };
 }
 
 export async function extractWithTreeSitter(

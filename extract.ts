@@ -79,34 +79,25 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
   const path = require("node:path");
   const config = loadConfig(projectPath);
 
-  console.log("  scan_dirs:", config.scan_dirs);
-  console.log("  extensions:", config.extensions);
-
   try {
     await initTreeSitter();
-    console.log("Tree-sitter initialized (Nix grammar loaded), ready:", isTreeSitterReady());
   } catch (e) {
     console.log("Tree-sitter not available, using regex fallback");
   }
 
   let knownFunctions: FunctionRegistry | undefined;
-  console.log("  isTreeSitterReady check:", isTreeSitterReady());
   if (isTreeSitterReady()) {
-    console.log("  Pass 1: building function registry...");
     knownFunctions = await buildFunctionRegistry(projectPath);
-    console.log("    Registry:", knownFunctions.simpleNames.size, "simple names,", knownFunctions.qualifiedNames.size, "qualified names");
   }
 
   let skippedCount = 0;
   let scannedCount = 0;
 
   for (const scanDir of config.scan_dirs) {
-    console.log("  Scanning:", scanDir);
     const fullDir = path.resolve(projectPath, scanDir);
     if (!fs.existsSync(fullDir)) continue;
 
     const files = fs.readdirSync(fullDir, { recursive: true }) as string[];
-    console.log("    Found", files.length, "entries");
     for (const file of files) {
       const filePath = path.join(fullDir, file);
       const relativePath = path.relative(projectPath, filePath);
@@ -117,8 +108,6 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
       if (!hasExtension(filePath, config.extensions)) continue;
 
       try {
-        const start = Date.now();
-        console.log("    Processing:", relativePath);
         const content = fs.readFileSync(filePath, "utf-8");
         const contentHash = computeHash(content);
 
@@ -143,7 +132,6 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
         } else {
           result = extract(content, relativePath);
         }
-        console.log("      ->", Date.now() - start, "ms,", result?.nodes?.length, "nodes");
 
         result.nodes = result.nodes.map(n => {
           if (n.id === relativePath) {
