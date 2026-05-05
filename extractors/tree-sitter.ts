@@ -266,8 +266,52 @@ function extractNix(
     }
   }
 
+  const concepts: ExtractedConcept[] = [];
+
+  for (const sel of result.selects) {
+    const text = sel.text;
+
+    const provMatch = text.match(/^(programs|services|boot|hardware|networking|security|systemd|virtualisation)\.(\w[\w-]*)/);
+    if (provMatch) {
+      const optionKey = `${provMatch[1]}.${provMatch[2]}`;
+      concepts.push({ node_id: `option.${optionKey}`, kind: "option", name: optionKey, file_path: filePath, line_number: sel.row + 1 });
+    }
+
+    const inputMatch = text.match(/^inputs\.(\w[\w-]*)/);
+    if (inputMatch) {
+      concepts.push({ node_id: `inputs.${inputMatch[1]}`, kind: "input", name: inputMatch[1], file_path: filePath, line_number: sel.row + 1 });
+    }
+
+    const pkgMatch = text.match(/pkgs\.(\w[\w-]*)/);
+    if (pkgMatch) {
+      concepts.push({ node_id: `pkg.${pkgMatch[1]}`, kind: "package", name: pkgMatch[1], file_path: filePath, line_number: sel.row + 1 });
+    }
+  }
+
+  for (const ap of result.attrPaths) {
+    const text = ap.text;
+    const provMatch = text.match(/^(programs|services|boot|hardware|networking|security|systemd|virtualisation)\.(\w[\w-]*)/);
+    if (provMatch) {
+      const optionKey = `${provMatch[1]}.${provMatch[2]}`;
+      if (!concepts.find(c => c.name === optionKey)) {
+        concepts.push({ node_id: `option.${optionKey}`, kind: "option", name: optionKey, file_path: filePath, line_number: ap.row + 1 });
+      }
+    }
+  }
+
+  const lines = content.split("\n");
+  const FUNC_PATTERN = /\b(lib\.(mkIf|mkDefault|mkForce|mkOverride|mkMerge|mkOrder|optionalString|optionals)|pkgs\.(callPackage|wrapFirefox|buildGoModule|stdenv\.mkDerivation))\b/g;
+  for (let i = 0; i < lines.length; i++) {
+    let fnMatch: RegExpExecArray | null;
+    const FUNC_PATTERN_LINE = /\b(lib\.(mkIf|mkDefault|mkForce|mkOverride|mkMerge|mkOrder|optionalString|optionals)|pkgs\.(callPackage|wrapFirefox|buildGoModule|stdenv\.mkDerivation))\b/g;
+    while ((fnMatch = FUNC_PATTERN_LINE.exec(lines[i])) !== null) {
+      const funcName = fnMatch[1];
+      concepts.push({ node_id: `${filePath}:func:${funcName}:${i}`, kind: "function", name: funcName, file_path: filePath, line_number: i + 1, snippet: lines[i].trim().slice(0, 80) });
+    }
+  }
+
   tree.delete();
-  return { nodes, edges };
+  return { nodes, edges, concepts };
 }
 
 interface TsWalkResult {
