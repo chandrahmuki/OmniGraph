@@ -78,6 +78,8 @@ interface WalkResult {
   strings: { text: string; row: number }[];
   assigns: { text: string; row: number }[];
   attrPaths: { text: string; row: number }[];
+  withExprs: { expr: string; body: string; row: number; packages: string[] }[];
+  interpolations: { text: string; row: number }[];
 }
 
 function walkTree(node: any, result: WalkResult): void {
@@ -98,6 +100,28 @@ function walkTree(node: any, result: WalkResult): void {
   }
   if (node.type === "attribute_path" || node.type === "attrpath") {
     result.attrPaths.push({ text: node.text, row: node.startPosition.row });
+  }
+  if (node.type === "with_expression") {
+    const exprNode = node.childForFieldName("expression") || node.child(1);
+    const bodyNode = node.childForFieldName("body") || node.child(2);
+    if (exprNode && bodyNode) {
+      const packages: string[] = [];
+      if (bodyNode.type === "list_expression" || bodyNode.type === "list") {
+        for (let i = 0; i < bodyNode.childCount; i++) {
+          const child = bodyNode.child(i);
+          if (child.type === "variable_expression" || child.type === "identifier") {
+            const idNode = child.type === "variable_expression" ? child.child(0) : child;
+            if (idNode && idNode.type === "identifier") {
+              packages.push(idNode.text);
+            }
+          }
+        }
+      }
+      result.withExprs.push({ expr: exprNode.text, body: bodyNode.text, row: node.startPosition.row, packages });
+    }
+  }
+  if (node.type === "interpolation") {
+    result.interpolations.push({ text: node.text, row: node.startPosition.row });
   }
   for (let i = 0; i < node.childCount; i++) {
     walkTree(node.child(i), result);
@@ -125,7 +149,7 @@ function extractNix(
 
   parser.setLanguage(lang);
   const tree = parser.parse(content);
-  const result: WalkResult = { paths: [], selects: [], applies: [], strings: [], assigns: [], attrPaths: [] };
+  const result: WalkResult = { paths: [], selects: [], applies: [], strings: [], assigns: [], attrPaths: [], withExprs: [], interpolations: [] };
   walkTree(tree.rootNode, result);
 
   for (const p of result.paths) {
@@ -243,26 +267,23 @@ function extractNix(
     }
   }
 
-  const PKG_PATTERN = /\$\{pkgs\.(\w[\w-]*)\}/g;
-  for (const s of result.strings) {
-    let pkgMatch: RegExpExecArray | null;
-    while ((pkgMatch = PKG_PATTERN.exec(s.text)) !== null) {
-      const pkgId = `pkg.${pkgMatch[1]}`;
-      addNode(pkgId, "option", pkgMatch[1], undefined as any);
-      edges.push({ from_id: filePath, to_id: pkgId, type: "provides_option", confidence: "auto" });
+  for (const withExpr of result.withExprs) {
+    if (withExpr.expr === "pkgs") {
+      for (const pkgName of withExpr.packages) {
+        const pkgId = `pkg.${pkgName}`;
+        addNode(pkgId, "option", pkgName, undefined as any);
+        edges.push({ from_id: filePath, to_id: pkgId, type: "provides_option", confidence: "auto" });
+      }
     }
   }
 
-  const HOME_PKGS_PATTERN = /home\.packages\s*=\s*.*?(\w[\w-]*)/g;
-  for (const line of content.split("\n")) {
-    let hpMatch: RegExpExecArray | null;
-    while ((hpMatch = HOME_PKGS_PATTERN.exec(line)) !== null) {
-      const word = hpMatch[1];
-      if (word !== "with" && word !== "pkgs") {
-        const pkgId = `pkg.${word}`;
-        addNode(pkgId, "option", word, undefined as any);
-        edges.push({ from_id: filePath, to_id: pkgId, type: "provides_option", confidence: "auto" });
-      }
+  for (const interp of result.interpolations) {
+    const selMatch = interp.text.match(/\$\{pkgs\.(\w[\w-]*)\}/);
+    if (selMatch) {
+      const pkgName = selMatch[1];
+      const pkgId = `pkg.${pkgName}`;
+      addNode(pkgId, "option", pkgName, undefined as any);
+      edges.push({ from_id: filePath, to_id: pkgId, type: "provides_option", confidence: "auto" });
     }
   }
 
@@ -282,7 +303,7 @@ function extractNix(
       concepts.push({ node_id: `inputs.${inputMatch[1]}`, kind: "input", name: inputMatch[1], file_path: filePath, line_number: sel.row + 1 });
     }
 
-    const pkgMatch = text.match(/pkgs\.(\w[\w-]*)/);
+    const pkgMatch = text.match(/^pkgs\.(\w[\w-]*)/);
     if (pkgMatch) {
       concepts.push({ node_id: `pkg.${pkgMatch[1]}`, kind: "package", name: pkgMatch[1], file_path: filePath, line_number: sel.row + 1 });
     }
@@ -295,6 +316,27 @@ function extractNix(
       const optionKey = `${provMatch[1]}.${provMatch[2]}`;
       if (!concepts.find(c => c.name === optionKey)) {
         concepts.push({ node_id: `option.${optionKey}`, kind: "option", name: optionKey, file_path: filePath, line_number: ap.row + 1 });
+      }
+    }
+  }
+
+  for (const withExpr of result.withExprs) {
+    if (withExpr.expr === "pkgs") {
+      for (const pkgName of withExpr.packages) {
+        const pkgId = `pkg.${pkgName}`;
+        if (!concepts.find(c => c.name === pkgName)) {
+          concepts.push({ node_id: pkgId, kind: "package", name: pkgName, file_path: filePath, line_number: withExpr.row + 1 });
+        }
+      }
+    }
+  }
+
+  for (const interp of result.interpolations) {
+    const selMatch = interp.text.match(/\$\{pkgs\.(\w[\w-]*)\}/);
+    if (selMatch) {
+      const pkgName = selMatch[1];
+      if (!concepts.find(c => c.name === pkgName)) {
+        concepts.push({ node_id: `pkg.${pkgName}`, kind: "package", name: pkgName, file_path: filePath, line_number: interp.row + 1 });
       }
     }
   }
