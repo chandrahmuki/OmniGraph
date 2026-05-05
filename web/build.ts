@@ -1,22 +1,33 @@
-import { GraphDB } from "/home/david/.local/share/omnigraph/db.ts";
+import { GraphDB } from "../db.ts";
+import { loadConfig } from "../extract.ts";
 
-export function buildHtml(dbPath: string, outputPath: string): void {
+export function buildHtml(dbPath: string, outputPath: string, projectPath: string): void {
   const fs = require("node:fs");
   const path = require("node:path");
   const db = new GraphDB(dbPath);
 
   const nodes = db.getAllNodes();
   const edges = db.getAllEdges();
+  const annotationsByNode = db.getAllAnnotations();
+  const annotationsObj: Record<string, { key: string; value: string }[]> = {};
+  for (const [nodeId, anns] of annotationsByNode) {
+    annotationsObj[nodeId] = anns;
+  }
 
-  // Inline D3 for file:// compatibility
-  const d3Path = path.join(import.meta.dirname || path.dirname(import.meta.url.replace("file://", "")), "d3.min.js");
+  const nodeInfo: Record<string, { incoming: { from_id: string; type: string }[]; outgoing: { to_id: string; type: string }[] }> = {};
+  for (const n of nodes) {
+    nodeInfo[n.id] = { incoming: [], outgoing: [] };
+  }
+  for (const e of edges) {
+    if (nodeInfo[e.from_id]) nodeInfo[e.from_id].outgoing.push({ to_id: e.to_id, type: e.type });
+    if (nodeInfo[e.to_id]) nodeInfo[e.to_id].incoming.push({ from_id: e.from_id, type: e.type });
+  }
+
+  const d3Path = path.join(import.meta.dirname || __dirname, "d3.min.js");
   let d3Code = "";
   try {
     d3Code = fs.readFileSync(d3Path, "utf-8");
-  } catch {
-    // fallback: try absolute path
-    try { d3Code = fs.readFileSync("/home/david/.local/share/omnigraph/web/d3.min.js", "utf-8"); } catch {}
-  }
+  } catch {}
 
   const html = `<!DOCTYPE html>
 <html lang="fr">
@@ -79,22 +90,34 @@ export function buildHtml(dbPath: string, outputPath: string): void {
       bottom: 16px;
       left: 16px;
       z-index: 10;
-      background: rgba(13, 17, 23, 0.9);
+      background: rgba(13, 17, 23, 0.95);
       border: 1px solid #30363d;
       border-radius: 8px;
-      padding: 12px;
-      max-width: 320px;
+      padding: 14px;
+      max-width: 420px;
+      max-height: 55vh;
+      overflow-y: auto;
       display: none;
     }
-    #info h3 { font-size: 14px; margin-bottom: 8px; color: #f0f6fc; }
-    #info p { font-size: 12px; color: #8b949e; margin: 4px 0; }
-    #info .tag {
+    #info h3 { font-size: 14px; margin-bottom: 4px; color: #f0f6fc; }
+    #infoMeta { font-size: 12px; color: #8b949e; margin-bottom: 8px; }
+    #infoMeta .date { color: #58a6ff; margin-right: 6px; }
+    #infoContent { margin-bottom: 8px; }
+    #infoContent .section { margin-top: 8px; }
+    #infoContent .section-title { color: #58a6ff; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+    #infoContent .item { font-size: 12px; color: #c9d1d9; padding: 1px 0; line-height: 1.5; }
+    #infoTags { margin-bottom: 8px; }
+    .tag {
       display: inline-block;
       padding: 2px 8px;
       border-radius: 4px;
       font-size: 11px;
-      margin-top: 4px;
+      margin: 2px;
     }
+    #infoEdges { margin-top: 4px; }
+    #infoEdges .section { margin-top: 8px; }
+    #infoEdges .section-title { color: #8b949e; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+    #infoEdges .item { font-size: 12px; color: #c9d1d9; padding: 1px 0; }
     #stats {
       position: absolute;
       bottom: 16px;
@@ -103,6 +126,16 @@ export function buildHtml(dbPath: string, outputPath: string): void {
       font-size: 12px;
       color: #8b949e;
     }
+    #debug {
+      position: absolute;
+      top: 50px;
+      left: 16px;
+      z-index: 20;
+      font-size: 11px;
+      color: #f97583;
+      max-width: 400px;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -110,11 +143,13 @@ export function buildHtml(dbPath: string, outputPath: string): void {
   <div id="filters"></div>
   <div id="info">
     <h3 id="infoTitle"></h3>
-    <p id="infoType"></p>
-    <p id="infoPath"></p>
+    <div id="infoMeta"></div>
+    <div id="infoContent"></div>
     <div id="infoTags"></div>
+    <div id="infoEdges"></div>
   </div>
   <div id="stats"></div>
+  <div id="debug"></div>
   <svg id="graph"></svg>
 
   <script>
@@ -122,13 +157,35 @@ export function buildHtml(dbPath: string, outputPath: string): void {
     ${d3Code}
   </script>
   <script>
+  try {
     const nodes = ${JSON.stringify(nodes)};
     const edges = ${JSON.stringify(edges)};
-    const colors = {
-      file: '#3b82f6', module: '#6366f1', function: '#10b981',
-      import: '#f59e0b', error: '#ef4444', lesson: '#22c55e',
-      concept: '#a855f7', tag: '#ec4899'
-    };
+    const nodeInfo = ${JSON.stringify(nodeInfo)};
+    const annotationsObj = ${JSON.stringify(annotationsObj)};
+    const config = ${JSON.stringify(loadConfig(projectPath))};
+    const entityTypes = config.entity_types || {};
+    const relationTypes = config.relation_types || {};
+    const colors = Object.fromEntries(
+      Object.entries(entityTypes).map(([k, v]) => [k, v.color])
+    );
+    colors.default = '#8b949e';
+    const edgeColors = Object.fromEntries(
+      Object.entries(relationTypes).map(([k, v]) => [k, v.color || '#30363d'])
+    );
+    edgeColors.default = '#30363d';
+    const relationLabels = Object.fromEntries(
+      Object.entries(relationTypes).map(([k, v]) => [k, v.label || k])
+    );
+
+    // Deduplicate
+    const seenNodeIds = new Set();
+    const uniqueNodes = nodes.filter(n => {
+      if (seenNodeIds.has(n.id)) return false;
+      seenNodeIds.add(n.id);
+      return true;
+    });
+    const nodeIdSet = new Set(uniqueNodes.map(n => n.id));
+    const validEdges = edges.filter(e => nodeIdSet.has(e.from_id) && nodeIdSet.has(e.to_id));
 
     const width = window.innerWidth;
     const height = window.innerHeight;
@@ -144,45 +201,55 @@ export function buildHtml(dbPath: string, outputPath: string): void {
       .on('zoom', (e) => g.attr('transform', e.transform));
     svg.call(zoom);
 
-    // Initialize positions near center to prevent explosion
-    nodes.forEach(n => {
-      if (!n.x) n.x = width / 2 + (Math.random() - 0.5) * 200;
-      if (!n.y) n.y = height / 2 + (Math.random() - 0.5) * 200;
+    uniqueNodes.forEach(n => {
+      n.connections = validEdges.filter(e => e.from_id === n.id || e.to_id === n.id).length;
     });
 
-    // D3 needs source/target, not from_id/to_id
-    edges.forEach(e => {
+    // Radius by type
+    function getRadius(n) {
+      if (n.type === 'lesson_item') return Math.sqrt(Math.max(n.connections || 1, 1)) * 3 + 3;
+      if (n.type === 'option') return 3;
+      return Math.sqrt(Math.max(n.connections || 1, 1)) * 4 + 4;
+    }
+
+    const typeAngles = {};
+    const types = [...new Set(uniqueNodes.map(n => n.type))];
+    types.forEach((t, i) => typeAngles[t] = (i / types.length) * 2 * Math.PI);
+
+    uniqueNodes.forEach(n => {
+      const angle = typeAngles[n.type] || 0;
+      const dist = 150 + Math.random() * 200;
+      n.x = width / 2 + Math.cos(angle) * dist;
+      n.y = height / 2 + Math.sin(angle) * dist;
+    });
+
+    validEdges.forEach(e => {
       e.source = e.from_id;
       e.target = e.to_id;
     });
 
-    const simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(edges).id(d => d.id).distance(80))
-      .force('charge', d3.forceManyBody().strength(-50))
+    const simulation = d3.forceSimulation(uniqueNodes)
+      .force('link', d3.forceLink(validEdges).id(d => d.id).distance(60).strength(0.3))
+      .force('charge', d3.forceManyBody().strength(-80))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(d => Math.sqrt((d.connections || 1)) * 6 + 8))
-      .force('x', d3.forceX(width / 2).strength(0.05))
-      .force('y', d3.forceY(height / 2).strength(0.05));
-
-    // Compter connexions
-    nodes.forEach(n => {
-      n.connections = edges.filter(e => e.from_id === n.id || e.to_id === n.id).length;
-    });
+      .force('collision', d3.forceCollide().radius(d => getRadius(d) + 2))
+      .force('x', d3.forceX(width / 2).strength(0.03))
+      .force('y', d3.forceY(height / 2).strength(0.03));
 
     const link = g.append('g')
       .selectAll('line')
-      .data(edges)
+      .data(validEdges)
       .join('line')
-      .attr('stroke', '#30363d')
+      .attr('stroke', d => edgeColors[d.type] || edgeColors.default)
       .attr('stroke-width', 1.5)
-      .attr('opacity', 0.6);
+      .attr('opacity', 0.5);
 
     const node = g.append('g')
       .selectAll('circle')
-      .data(nodes)
+      .data(uniqueNodes)
       .join('circle')
-      .attr('r', d => Math.sqrt(d.connections || 1) * 5 + 4)
-      .attr('fill', d => colors[d.type] || '#8b949e')
+      .attr('r', d => getRadius(d))
+      .attr('fill', d => colors[d.type] || colors.default)
       .attr('stroke', '#0d1117')
       .attr('stroke-width', 2)
       .style('cursor', 'pointer')
@@ -193,16 +260,15 @@ export function buildHtml(dbPath: string, outputPath: string): void {
 
     const label = g.append('g')
       .selectAll('text')
-      .data(nodes.filter(d => d.connections > 1))
+      .data(uniqueNodes.filter(d => d.connections > 1 || d.type === 'lesson_item' || d.type === 'lesson'))
       .join('text')
-      .text(d => d.label.length > 20 ? d.label.slice(0, 20) + '...' : d.label)
-      .attr('font-size', 10)
+      .text(d => d.label.length > 25 ? d.label.slice(0, 25) + '...' : d.label)
+      .attr('font-size', d => d.type === 'lesson_item' ? 8 : 10)
       .attr('fill', '#c9d1d9')
-      .attr('dx', 8)
+      .attr('dx', d => getRadius(d) + 4)
       .attr('dy', 3);
 
-    // Filtres
-    const types = [...new Set(nodes.map(n => n.type))];
+    // Filters
     const activeFilters = new Set(types);
     const filterContainer = d3.select('#filters');
 
@@ -228,49 +294,161 @@ export function buildHtml(dbPath: string, outputPath: string): void {
       });
       label.style('opacity', d => activeFilters.has(d.type) ? 1 : 0);
       link.style('opacity', d =>
-        visibleNodes.has(d.source.id) && visibleNodes.has(d.target.id) ? 0.6 : 0.05
+        visibleNodes.has(d.source.id) && visibleNodes.has(d.target.id) ? 0.5 : 0.05
       );
     }
 
-    // Recherche
+    // Search
     const searchInput = document.getElementById('searchInput');
     searchInput.addEventListener('input', (e) => {
       const term = e.target.value.toLowerCase();
       if (!term) {
         node.style('opacity', 1);
         label.style('opacity', 1);
-        link.style('opacity', 0.6);
+        link.style('opacity', 0.5);
         return;
       }
-      const matched = new Set(nodes.filter(n =>
-        n.label.toLowerCase().includes(term) ||
-        n.id.toLowerCase().includes(term)
+      const matched = new Set(uniqueNodes.filter(n =>
+        n.label.toLowerCase().includes(term) || n.id.toLowerCase().includes(term)
       ).map(n => n.id));
-
+      // Also match via annotations
+      for (const [nid, anns] of Object.entries(annotationsObj)) {
+        if (anns.some(a => a.value.toLowerCase().includes(term) || a.key.toLowerCase().includes(term))) {
+          matched.add(nid);
+        }
+      }
       node.style('opacity', d => matched.has(d.id) ? 1 : 0.1);
       label.style('opacity', d => matched.has(d.id) ? 1 : 0);
       link.style('opacity', d =>
-        matched.has(d.source.id) && matched.has(d.target.id) ? 0.6 : 0.05
+        matched.has(d.source.id) && matched.has(d.target.id) ? 0.5 : 0.05
       );
     });
 
-    // Clic sur nœud
+    // Click on node - enriched info panel
     node.on('click', (e, d) => {
       e.stopPropagation();
-      const connected = edges.filter(edge => edge.source.id === d.id || edge.target.id === d.id);
+      const connected = validEdges.filter(edge => edge.source.id === d.id || edge.target.id === d.id);
       const neighborIds = new Set(connected.map(e => e.source.id === d.id ? e.target.id : e.source.id));
 
       node.style('opacity', n => neighborIds.has(n.id) || n.id === d.id ? 1 : 0.1);
       label.style('opacity', n => neighborIds.has(n.id) || n.id === d.id ? 1 : 0);
       link.style('opacity', l => l.source.id === d.id || l.target.id === d.id ? 0.8 : 0.05);
 
-      document.getElementById('info').style.display = 'block';
+      const info = nodeInfo[d.id] || { incoming: [], outgoing: [] };
+
+      // Title
       document.getElementById('infoTitle').textContent = d.label;
-      document.getElementById('infoType').textContent = 'Type: ' + d.type;
-      document.getElementById('infoPath').textContent = d.file_path || d.id;
-      const tagDiv = document.getElementById('infoTags');
-      tagDiv.innerHTML = '<span class="tag" style="background:' + (colors[d.type] || '#333') + '20;color:' + (colors[d.type] || '#999') + '">' + d.type + '</span>' +
-        '<span style="margin-left:8px;font-size:11px;color:#8b949e">' + connected.length + ' connexion(s)</span>';
+
+      // Meta
+      let metaHtml = '';
+      if (d.created_at) metaHtml += '<span class="date">' + d.created_at + '</span> ';
+      metaHtml += '<span class="tag" style="background:' + (colors[d.type] || '#333') + '20;color:' + (colors[d.type] || '#999') + '">' + d.type + '</span>';
+      if (d.type === 'file' || d.type === 'lesson' || d.type === 'lesson_item') {
+        metaHtml += ' <span style="color:#8b949e;font-size:11px">' + (d.file_path || d.id) + '</span>';
+      }
+      if (d.connections) metaHtml += ' <span style="font-size:11px;color:#8b949e">' + d.connections + ' connexion(s)</span>';
+      document.getElementById('infoMeta').innerHTML = metaHtml;
+
+      // Content - type-specific
+      const contentDiv = document.getElementById('infoContent');
+      let contentHtml = '';
+
+      if (d.type === 'lesson_item') {
+        contentHtml += '<div class="section"><div class="section-title">Lesson</div><div class="item">' + d.label + '</div></div>';
+      } else if (d.type === 'lesson') {
+        const contains = validEdges.filter(e => e.source.id === d.id && e.type === 'lesson_contains')
+          .map(e => uniqueNodes.find(n => n.id === e.target.id))
+          .filter(Boolean);
+        if (contains.length) {
+          contentHtml += '<div class="section"><div class="section-title">Items (' + contains.length + ')</div>';
+          contains.slice(0, 10).forEach(it => {
+            const date = it.created_at ? '<span style="color:#58a6ff">[' + it.created_at + ']</span> ' : '';
+            contentHtml += '<div class="item">' + date + (it.label.length > 100 ? it.label.slice(0, 100) + '...' : it.label) + '</div>';
+          });
+          if (contains.length > 10) contentHtml += '<div class="item" style="color:#8b949e">... and ' + (contains.length - 10) + ' more</div>';
+          contentHtml += '</div>';
+        }
+      } else if (d.type === 'session') {
+        const modified = info.outgoing.filter(e => e.type === 'session_modified').map(e => e.to_id);
+        const produced = info.outgoing.filter(e => e.type === 'session_produced').map(e => e.to_id);
+        if (modified.length) {
+          contentHtml += '<div class="section"><div class="section-title">Modified</div>';
+          modified.forEach(m => contentHtml += '<div class="item">' + m + '</div>');
+          contentHtml += '</div>';
+        }
+        if (produced.length) {
+          contentHtml += '<div class="section"><div class="section-title">Produced</div>';
+          produced.forEach(p => contentHtml += '<div class="item">' + p + '</div>');
+          contentHtml += '</div>';
+        }
+      } else if (d.type === 'file') {
+        const provides = info.outgoing.filter(e => e.type === 'provides_option').map(e => e.to_id);
+        const usesInput = info.outgoing.filter(e => e.type === 'uses_input').map(e => e.to_id);
+        if (provides.length) {
+          contentHtml += '<div class="section"><div class="section-title">Provides</div>';
+          provides.slice(0, 8).forEach(p => contentHtml += '<div class="item">' + p + '</div>');
+          if (provides.length > 8) contentHtml += '<div class="item" style="color:#8b949e">... +' + (provides.length - 8) + ' more</div>';
+          contentHtml += '</div>';
+        }
+        if (usesInput.length) {
+          contentHtml += '<div class="section"><div class="section-title">Inputs</div>';
+          usesInput.forEach(i => contentHtml += '<div class="item">' + i + '</div>');
+          contentHtml += '</div>';
+        }
+      }
+
+      contentDiv.innerHTML = contentHtml;
+      contentDiv.style.display = contentHtml ? 'block' : 'none';
+
+      // Tags
+      const tags = (annotationsObj[d.id] || []).filter(a => a.key === 'tag').map(a => a.value);
+      const tagsDiv = document.getElementById('infoTags');
+      if (tags.length) {
+        tagsDiv.innerHTML = tags.map(t => '<span class="tag" style="background:#22c55e20;color:#22c55e">' + t + '</span>').join('');
+        tagsDiv.style.display = 'block';
+      } else {
+        tagsDiv.style.display = 'none';
+      }
+
+      // Edges grouped
+      const edgesDiv = document.getElementById('infoEdges');
+      let edgesHtml = '';
+      const outgoingByType = {};
+      (info.outgoing || []).forEach(e => {
+        if (!outgoingByType[e.type]) outgoingByType[e.type] = [];
+        outgoingByType[e.type].push(e.to_id);
+      });
+      const incomingByType = {};
+      (info.incoming || []).forEach(e => {
+        if (!incomingByType[e.type]) incomingByType[e.type] = [];
+        incomingByType[e.type].push(e.from_id);
+      });
+
+      for (const [type, targets] of Object.entries(outgoingByType)) {
+        const lbl = relationLabels[type] || type;
+        edgesHtml += '<div class="section"><div class="section-title">↓ ' + lbl + '</div>';
+        targets.slice(0, 6).forEach(t => {
+          const target = uniqueNodes.find(n => n.id === t);
+          edgesHtml += '<div class="item">' + (target ? target.label : t) + '</div>';
+        });
+        if (targets.length > 6) edgesHtml += '<div class="item" style="color:#8b949e">... +' + (targets.length - 6) + ' more</div>';
+        edgesHtml += '</div>';
+      }
+      for (const [type, sources] of Object.entries(incomingByType)) {
+        const lbl = relationLabels[type] || type;
+        edgesHtml += '<div class="section"><div class="section-title">↑ ' + lbl + '</div>';
+        sources.slice(0, 6).forEach(s => {
+          const src = uniqueNodes.find(n => n.id === s);
+          edgesHtml += '<div class="item">' + (src ? src.label : s) + '</div>';
+        });
+        if (sources.length > 6) edgesHtml += '<div class="item" style="color:#8b949e">... +' + (sources.length - 6) + ' more</div>';
+        edgesHtml += '</div>';
+      }
+
+      edgesDiv.innerHTML = edgesHtml;
+      edgesDiv.style.display = edgesHtml ? 'block' : 'none';
+
+      document.getElementById('info').style.display = 'block';
     });
 
     svg.on('click', () => {
@@ -293,7 +471,12 @@ export function buildHtml(dbPath: string, outputPath: string): void {
     });
 
     document.getElementById('stats').textContent =
-      nodes.length + ' nœuds | ' + edges.length + ' liens';
+      uniqueNodes.length + ' noeuds | ' + validEdges.length + ' liens';
+
+  } catch(err) {
+    document.getElementById('debug').style.display = 'block';
+    document.getElementById('debug').textContent = 'ERROR: ' + err.message + ' | ' + err.stack;
+  }
   </script>
 </body>
 </html>`;

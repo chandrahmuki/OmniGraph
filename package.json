@@ -1,0 +1,28 @@
+{
+  "name": "omnigraph",
+  "version": "0.2.0",
+  "description": "Universal knowledge graph for code + docs — dependency tracking, memory, semantic extraction",
+  "type": "module",
+  "scripts": {
+    "build": "bun run omnigraph.ts build",
+    "query": "bun run omnigraph.ts query",
+    "check": "bun run omnigraph.ts check",
+    "impact": "bun run omnigraph.ts impact",
+    "path": "bun run omnigraph.ts path",
+    "orphans": "bun run omnigraph.ts orphans",
+    "lessons": "bun run omnigraph.ts lessons",
+    "search": "bun run omnigraph.ts search",
+    "hotspots": "bun run omnigraph.ts hotspots",
+    "test": "bun run tests/test.ts",
+    "screenshot": "bash tests/screenshot.sh"
+  },
+  "dependencies": {
+    "web-tree-sitter": "^0.25.2"
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:chandrahmuki/OmniGraph.git"
+  },
+  "license": "MIT"
+}

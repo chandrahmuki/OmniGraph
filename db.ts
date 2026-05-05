@@ -19,7 +19,8 @@ export class GraphDB {
         label TEXT NOT NULL,
         file_path TEXT,
         line_number INTEGER,
-        content_hash TEXT
+        content_hash TEXT,
+        created_at TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
       CREATE INDEX IF NOT EXISTS idx_nodes_file ON nodes(file_path);
@@ -43,14 +44,18 @@ export class GraphDB {
       );
       CREATE INDEX IF NOT EXISTS idx_annotations_node ON annotations(node_id);
     `);
+
+    try {
+      this.db.exec("ALTER TABLE nodes ADD COLUMN created_at TEXT");
+    } catch {}
   }
 
-  insertNode(node: { id: string; type: string; label: string; file_path?: string; line_number?: number; content_hash?: string }) {
+  insertNode(node: { id: string; type: string; label: string; file_path?: string; line_number?: number; content_hash?: string; created_at?: string }) {
     const stmt = this.db.prepare(
-      `INSERT OR IGNORE INTO nodes (id, type, label, file_path, line_number, content_hash)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT OR IGNORE INTO nodes (id, type, label, file_path, line_number, content_hash, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     );
-    stmt.run(node.id, node.type, node.label, node.file_path || null, node.line_number || null, node.content_hash || null);
+    stmt.run(node.id, node.type, node.label, node.file_path || null, node.line_number || null, node.content_hash || null, node.created_at || null);
   }
 
   insertEdge(edge: { from_id: string; to_id: string; type: string; confidence?: string }) {
@@ -68,6 +73,21 @@ export class GraphDB {
     stmt.run(ann.node_id, ann.key, ann.value);
   }
 
+  getNodeById(id: string): any | null {
+    return this.db.query("SELECT * FROM nodes WHERE id = ?").get(id) as any | null;
+  }
+
+  deleteEdgesFromNode(fromId: string) {
+    this.db.exec(`DELETE FROM edges WHERE from_id = '${fromId.replace(/'/g, "''")}'`);
+  }
+
+  deleteNode(id: string) {
+    const safeId = id.replace(/'/g, "''");
+    this.db.exec(`DELETE FROM nodes WHERE id = '${safeId}'`);
+    this.db.exec(`DELETE FROM edges WHERE from_id = '${safeId}'`);
+    this.db.exec(`DELETE FROM annotations WHERE node_id = '${safeId}'`);
+  }
+
   getAllNodes(): any[] {
     return this.db.query("SELECT * FROM nodes").all();
   }
@@ -78,6 +98,16 @@ export class GraphDB {
 
   getAnnotationsForNode(nodeId: string): any[] {
     return this.db.query("SELECT * FROM annotations WHERE node_id = ?").all(nodeId);
+  }
+
+  getAllAnnotations(): Map<string, { key: string; value: string }[]> {
+    const rows = this.db.query("SELECT node_id, key, value FROM annotations").all() as { node_id: string; key: string; value: string }[];
+    const map = new Map<string, { key: string; value: string }[]>();
+    for (const row of rows) {
+      if (!map.has(row.node_id)) map.set(row.node_id, []);
+      map.get(row.node_id)!.push({ key: row.key, value: row.value });
+    }
+    return map;
   }
 
   getNeighbors(nodeId: string): any[] {

@@ -1,15 +1,34 @@
-import { GraphDB } from "/home/david/.local/share/omnigraph/db.ts";
-import { extract } from "/home/david/.local/share/omnigraph/extractors/generic.ts";
+import { GraphDB } from "./db.ts";
+import { extract } from "./extractors/generic.ts";
+import { extractMemory } from "./extractors/memory.ts";
+import { initTreeSitter, extractWithTreeSitter, isTreeSitterReady } from "./extractors/tree-sitter.ts";
 
 export interface Config {
   scan_dirs: string[];
   ignore_dirs: string[];
   extensions: string[];
+  memory?: {
+    sessions_dir: string;
+    lessons_dir: string;
+    skills_dir: string;
+  };
+}
+
+export function computeHash(content: string): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(content);
+  return hasher.digest("hex").slice(0, 16);
 }
 
 function shouldIgnore(filePath: string, ignoreDirs: string[]): boolean {
   const parts = filePath.split("/");
-  return parts.some(p => ignoreDirs.includes(p));
+  return ignoreDirs.some(dir => {
+    const dirParts = dir.split("/");
+    for (let i = 0; i <= parts.length - dirParts.length; i++) {
+      if (dirParts.every((dp, j) => parts[i + j] === dp)) return true;
+    }
+    return false;
+  });
 }
 
 function hasExtension(filePath: string, extensions: string[]): boolean {
@@ -20,7 +39,7 @@ export function loadConfig(projectPath: string): Config {
   const fs = require("node:fs");
   const path = require("node:path");
   const configPath = path.join(projectPath, "omnigraph.jsonc");
-  const defaultPath = "/home/david/.local/share/omnigraph/config.default.jsonc";
+  const defaultPath = path.join(import.meta.dirname || __dirname, "config.default.jsonc");
 
   let config: Config;
   try {
@@ -35,10 +54,20 @@ export function loadConfig(projectPath: string): Config {
   return config;
 }
 
-export function scanAndExtract(projectPath: string, db: GraphDB): void {
+export async function scanAndExtract(projectPath: string, db: GraphDB, incremental = false): Promise<void> {
   const fs = require("node:fs");
   const path = require("node:path");
   const config = loadConfig(projectPath);
+
+  try {
+    await initTreeSitter();
+    console.log("Tree-sitter initialized (Nix grammar loaded)");
+  } catch (e) {
+    console.log("Tree-sitter not available, using regex fallback");
+  }
+
+  let skippedCount = 0;
+  let scannedCount = 0;
 
   for (const scanDir of config.scan_dirs) {
     const fullDir = path.resolve(projectPath, scanDir);
@@ -55,7 +84,41 @@ export function scanAndExtract(projectPath: string, db: GraphDB): void {
 
       try {
         const content = fs.readFileSync(filePath, "utf-8");
-        const result = extract(content, relativePath);
+        const contentHash = computeHash(content);
+
+        if (incremental) {
+          const existingNode = db.getNodeById(relativePath);
+          if (existingNode && existingNode.content_hash === contentHash) {
+            skippedCount++;
+            continue;
+          }
+        }
+
+        scannedCount++;
+
+        let result;
+        if (isTreeSitterReady()) {
+          const tsResult = await extractWithTreeSitter(content, relativePath);
+          if (tsResult) {
+            result = tsResult;
+          } else {
+            result = extract(content, relativePath);
+          }
+        } else {
+          result = extract(content, relativePath);
+        }
+
+        result.nodes = result.nodes.map(n => {
+          if (n.id === relativePath) {
+            return { ...n, content_hash: contentHash };
+          }
+          return n;
+        });
+
+        if (incremental) {
+          db.deleteEdgesFromNode(relativePath);
+          db.deleteNode(relativePath);
+        }
 
         for (const node of result.nodes) {
           db.insertNode(node);
@@ -63,8 +126,28 @@ export function scanAndExtract(projectPath: string, db: GraphDB): void {
         for (const edge of result.edges) {
           db.insertEdge(edge);
         }
-      } catch (e) {
-        // Skip fichiers binaires ou illisibles
+      } catch {
+      }
+    }
+  }
+
+  if (incremental) {
+    console.log(`Incremental: scanned ${scannedCount}, skipped ${skippedCount} unchanged`);
+  } else {
+    console.log(`Scanned ${scannedCount} files`);
+  }
+
+  if (config.memory) {
+    const memResult = extractMemory(projectPath, config.memory);
+    for (const node of memResult.nodes) {
+      db.insertNode(node);
+    }
+    for (const edge of memResult.edges) {
+      db.insertEdge(edge);
+    }
+    if (memResult.annotations) {
+      for (const ann of memResult.annotations) {
+        db.insertAnnotation(ann);
       }
     }
   }

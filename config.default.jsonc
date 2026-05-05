@@ -1,36 +1,43 @@
-// Config par defaut OmniGraph
-// Copie ca dans ton projet comme omnigraph.jsonc et modifie
 {
   "project_name": "Mon Projet",
-  // Repertoires a scanner
   "scan_dirs": ["."],
-  // Repertoires a ignorer (en plus de .git, node_modules, etc)
-  "ignore_dirs": [".git", "node_modules", ".omnigraph", "target", "dist", "build"],
-  // Extensions de fichiers a scanner
-  "extensions": [".ts", ".js", ".nix", ".py", ".rs", ".go", ".md", ".json", ".yaml", ".yml", ".toml"],
-  // Types d entites et leurs couleurs pour la viz
+  "ignore_dirs": [".git", "node_modules", ".omnigraph", "target", "dist", "build", ".worktrees", "memory/sessions", "memory/skills", "memory/reference", "docs", "templates", "generated", "scripts"],
+  "extensions": [".nix", ".py", ".ts", ".js", ".rs", ".go", ".c", ".h", ".cpp", ".hpp"],
   "entity_types": {
     "file":     {"color": "#3b82f6", "label": "Fichier"},
-    "module":   {"color": "#6366f1", "label": "Module"},
-    "function": {"color": "#10b981", "label": "Fonction"},
-    "import":   {"color": "#f59e0b", "label": "Import"},
-    "error":    {"color": "#ef4444", "label": "Erreur"},
+    "input":    {"color": "#f59e0b", "label": "Input/Dep"},
+    "option":   {"color": "#a855f7", "label": "Option"},
+    "session":  {"color": "#06b6d4", "label": "Session"},
     "lesson":   {"color": "#22c55e", "label": "Lesson"},
-    "concept":  {"color": "#a855f7", "label": "Concept"},
-    "tag":      {"color": "#ec4899", "label": "Tag"}
+    "lesson_item": {"color": "#16a34a", "label": "Item de lesson"},
+    "skill":    {"color": "#ec4899", "label": "Skill"},
+    "error":    {"color": "#ef4444", "label": "Erreur"},
+    "concept":  {"color": "#8b5cf6", "label": "Concept"}
   },
-  // Types de relations
-  "relation_types": {
-    "imports":     {"label": "importe"},
-    "depends_on":  {"label": "depend de"},
-    "references":  {"label": "reference"},
-    "caused":      {"label": "a cause"},
-    "fixed_by":    {"label": "corrigé par"},
-    "links_to":    {"label": "lien vers"},
-    "mentions":    {"label": "mentionne"}
+"relation_types": {
+    "imports":              {"label": "importe",          "color": "#3b82f6"},
+    "uses_input":           {"label": "utilise input",    "color": "#f59e0b"},
+    "uses_module":          {"label": "utilise module",   "color": "#f59e0b"},
+    "uses_colors":          {"label": "utilise palette",  "color": "#a855f7"},
+    "references_secrets":   {"label": "ref secrets",      "color": "#ef4444"},
+    "references_generated": {"label": "ref generated",    "color": "#6366f1"},
+    "references_config":    {"label": "ref config",       "color": "#6366f1"},
+    "provides_option":      {"label": "fournit option",   "color": "#a855f7"},
+    "consumes_option":      {"label": "consomme option",  "color": "#a855f7"},
+    "session_modified":     {"label": "a modifie",        "color": "#06b6d4"},
+    "session_produced":     {"label": "a produit",        "color": "#22c55e"},
+    "lesson_applies_to":    {"label": "s'applique a",     "color": "#22c55e"},
+    "lesson_contains":       {"label": "contient",         "color": "#22c55e"},
+    "lesson_learned_in":    {"label": "appris dans",       "color": "#06b6d4"},
+    "indexes":              {"label": "indexe",            "color": "#8b949e"},
+    "links_to":             {"label": "lien vers",        "color": "#8b949e"},
+    "caused":               {"label": "a cause",           "color": "#ef4444"},
+    "learned_from":         {"label": "apris de",          "color": "#22c55e"},
+    "mentions":             {"label": "mentionne",         "color": "#8b949e"}
   },
-  // Extracteurs a activer
-  "extractors": [
-    "./extractors/generic.ts"
-  ]
+  "memory": {
+    "sessions_dir": "memory/sessions",
+    "lessons_dir": "memory/lessons",
+    "skills_dir": "memory/skills"
+  }
 }
