@@ -221,7 +221,7 @@ export function extractMemory(
     }
   }
 
-  function addEdge(from: string, to: string, type: string, confidence = "auto") {
+  function addEdge(from: string, to: string, type: string, confidence = "extracted") {
     if (!edges.find(e => e.from_id === from && e.to_id === to && e.type === type)) {
       edges.push({ from_id: from, to_id: to, type, confidence });
     }

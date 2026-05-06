@@ -260,6 +260,16 @@ async function main() {
       }
       if (provides.length) console.log(`⚙️ provides: ${provides.join(", ")}`);
       if (consumes.length) console.log(`⚙️ consumes: ${consumes.join(", ")}`);
+
+      const allRelated = [...down, ...up];
+      const confCounts: Record<string, number> = {};
+      for (const e of allRelated) {
+        const c = e.confidence || "unknown";
+        confCounts[c] = (confCounts[c] || 0) + 1;
+      }
+      const confParts = Object.entries(confCounts).map(([k, v]) => `${v} ${k}`);
+      if (confParts.length) console.log(`🏷️ confidence: ${confParts.join(", ")}`);
+
       console.log(`⚠️ risk: ${risk} (${usedBy.length} reverse deps)`);
 
       db.close();

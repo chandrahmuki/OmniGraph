@@ -194,7 +194,7 @@ function matchPatterns(
           from_id: filePath,
           to_id: targetId,
           type: pat.edgeType,
-          confidence: "auto",
+          confidence: "inferred",
         });
       }
     }

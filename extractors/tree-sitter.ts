@@ -167,7 +167,7 @@ function extractNix(
         resolved = resolved.replace(/\/?modules$/, "/modules/default.nix").replace(/^\//, "");
       }
       addNode(resolved, "file", resolved.split("/").pop() || resolved, resolved);
-      edges.push({ from_id: filePath, to_id: resolved, type: "imports", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: resolved, type: "imports", confidence: "extracted" });
     }
   }
 
@@ -178,7 +178,7 @@ function extractNix(
       if (rawPath.startsWith(".")) {
         const resolved = resolveRelativePath(filePath, rawPath);
         addNode(resolved, "file", resolved.split("/").pop() || resolved, resolved);
-        edges.push({ from_id: filePath, to_id: resolved, type: "imports", confidence: "auto" });
+        edges.push({ from_id: filePath, to_id: resolved, type: "imports", confidence: "extracted" });
       }
     }
   }
@@ -191,7 +191,7 @@ function extractNix(
       if (inputName) {
         const inputId = `inputs.${inputName}`;
         addNode(inputId, "input", inputName);
-        edges.push({ from_id: filePath, to_id: inputId, type: "uses_input", confidence: "auto" });
+        edges.push({ from_id: filePath, to_id: inputId, type: "uses_input", confidence: "inferred" });
       }
     }
 
@@ -200,14 +200,14 @@ function extractNix(
       if (secretMatch) {
         const secretId = `secrets/secrets.yaml`;
         addNode(secretId, "file", "secrets.yaml", secretId);
-        edges.push({ from_id: filePath, to_id: secretId, type: "references_secrets", confidence: "auto" });
+        edges.push({ from_id: filePath, to_id: secretId, type: "references_secrets", confidence: "extracted" });
       }
     }
 
     if (text.match(/\b(lib|colors)\./) || text.includes("colors.nix")) {
       if (text.includes("colors")) {
         addNode("lib/colors.nix", "file", "colors.nix", "lib/colors.nix");
-        edges.push({ from_id: filePath, to_id: "lib/colors.nix", type: "uses_colors", confidence: "auto" });
+        edges.push({ from_id: filePath, to_id: "lib/colors.nix", type: "uses_colors", confidence: "extracted" });
       }
     }
   }
@@ -218,31 +218,31 @@ function extractNix(
     const secretsMatch = text.match(/(secrets\/[\w.-]+\.yaml)/);
     if (secretsMatch) {
       addNode(secretsMatch[1], "file", secretsMatch[1].split("/").pop() || secretsMatch[1], secretsMatch[1]);
-      edges.push({ from_id: filePath, to_id: secretsMatch[1], type: "references_secrets", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: secretsMatch[1], type: "references_secrets", confidence: "extracted" });
     }
 
     const genMatch = text.match(/(generated\/[\w.-]+\.(json|toml|yaml|conf))/);
     if (genMatch) {
       addNode(genMatch[1], "file", genMatch[1].split("/").pop() || genMatch[1], genMatch[1]);
-      edges.push({ from_id: filePath, to_id: genMatch[1], type: "references_generated", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: genMatch[1], type: "references_generated", confidence: "extracted" });
     }
 
     const sopsMatch = text.match(/sops[\/\\]([\w_-]+)/);
     if (sopsMatch) {
       addNode("secrets/secrets.yaml", "file", "secrets.yaml", "secrets/secrets.yaml");
-      edges.push({ from_id: filePath, to_id: "secrets/secrets.yaml", type: "references_secrets", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: "secrets/secrets.yaml", type: "references_secrets", confidence: "extracted" });
     }
 
     const nvimMatch = text.match(/nixos-config\/(nvim\/)/);
     if (nvimMatch) {
       addNode(nvimMatch[1], "file", nvimMatch[1], nvimMatch[1]);
-      edges.push({ from_id: filePath, to_id: nvimMatch[1], type: "references_config", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: nvimMatch[1], type: "references_config", confidence: "extracted" });
     }
 
     const agentMatch = text.match(/(\.agent\/[\w.-]+\.json)/);
     if (agentMatch) {
       addNode(agentMatch[1], "file", agentMatch[1].split("/").pop() || agentMatch[1], agentMatch[1]);
-      edges.push({ from_id: filePath, to_id: agentMatch[1], type: "references_config", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: agentMatch[1], type: "references_config", confidence: "extracted" });
     }
   }
 
@@ -254,14 +254,14 @@ function extractNix(
     if (provMatch) {
       const optionId = `option.${sel.text.split(".").slice(0, 2).join(".")}`;
       addNode(optionId, "option", sel.text.split(".").slice(0, 2).join("."), undefined as any);
-      edges.push({ from_id: filePath, to_id: optionId, type: "provides_option", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: optionId, type: "provides_option", confidence: "extracted" });
     }
 
     const consumeMatch = sel.text.match(CONSUME_PATTERN);
     if (consumeMatch) {
       const optionId = `option.${consumeMatch[1]}`;
       addNode(optionId, "option", consumeMatch[1], undefined as any);
-      edges.push({ from_id: filePath, to_id: optionId, type: "consumes_option", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: optionId, type: "consumes_option", confidence: "extracted" });
     }
   }
 
@@ -271,7 +271,7 @@ function extractNix(
     if (provMatch) {
       const optionId = `option.${text.split(".").slice(0, 2).join(".")}`;
       addNode(optionId, "option", text.split(".").slice(0, 2).join("."), undefined as any);
-      edges.push({ from_id: filePath, to_id: optionId, type: "provides_option", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: optionId, type: "provides_option", confidence: "extracted" });
     }
   }
 
@@ -280,7 +280,7 @@ function extractNix(
       for (const pkgName of withExpr.packages) {
         const pkgId = `pkg.${pkgName}`;
         addNode(pkgId, "option", pkgName, undefined as any);
-        edges.push({ from_id: filePath, to_id: pkgId, type: "provides_option", confidence: "auto" });
+        edges.push({ from_id: filePath, to_id: pkgId, type: "provides_option", confidence: "extracted" });
       }
     }
   }
@@ -291,7 +291,7 @@ function extractNix(
       const pkgName = selMatch[1];
       const pkgId = `pkg.${pkgName}`;
       addNode(pkgId, "option", pkgName, undefined as any);
-      edges.push({ from_id: filePath, to_id: pkgId, type: "provides_option", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: pkgId, type: "provides_option", confidence: "extracted" });
     }
   }
 
@@ -535,35 +535,35 @@ function extractTsJs(
   for (const fn of result.functions) {
     const nodeId = fn.parent ? `${filePath}:${fn.parent}.${fn.name}` : `${filePath}:${fn.name}`;
     addNode(nodeId, "function", fn.name, filePath, fn.row + 1);
-    edges.push({ from_id: filePath, to_id: nodeId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: nodeId, type: "defines", confidence: "extracted" });
     if (fn.parent) {
       const classId = `${filePath}:${fn.parent}`;
       addNode(classId, "class", fn.parent, filePath, 0);
-      edges.push({ from_id: classId, to_id: nodeId, type: "defines", confidence: "auto" });
+      edges.push({ from_id: classId, to_id: nodeId, type: "defines", confidence: "extracted" });
     }
   }
 
   for (const cls of result.classes) {
     const classId = `${filePath}:${cls.name}`;
     addNode(classId, "class", cls.name, filePath, cls.row + 1);
-    edges.push({ from_id: filePath, to_id: classId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: classId, type: "defines", confidence: "extracted" });
     for (const method of cls.methods) {
       const methodId = `${filePath}:${cls.name}.${method}`;
       addNode(methodId, "function", method, filePath, 0);
-      edges.push({ from_id: classId, to_id: methodId, type: "defines", confidence: "auto" });
+      edges.push({ from_id: classId, to_id: methodId, type: "defines", confidence: "extracted" });
     }
   }
 
   for (const iface of result.interfaces) {
     const ifaceId = `${filePath}:${iface.name}`;
     addNode(ifaceId, "interface", iface.name, filePath, iface.row + 1);
-    edges.push({ from_id: filePath, to_id: ifaceId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: ifaceId, type: "defines", confidence: "extracted" });
   }
 
   for (const ta of result.typeAliases) {
     const taId = `${filePath}:${ta.name}`;
     addNode(taId, "concept", ta.name, filePath, ta.row + 1);
-    edges.push({ from_id: filePath, to_id: taId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: taId, type: "defines", confidence: "extracted" });
   }
 
   for (const imp of result.imports) {
@@ -571,17 +571,17 @@ function extractTsJs(
       const resolved = resolveRelativePath(filePath, imp.source);
       const resolvedWithExt = resolved.endsWith(".ts") ? resolved : resolved + ".ts";
       addNode(resolvedWithExt, "file", resolvedWithExt.split("/").pop() || resolvedWithExt, resolvedWithExt);
-      edges.push({ from_id: filePath, to_id: resolvedWithExt, type: "imports", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: resolvedWithExt, type: "imports", confidence: "extracted" });
       for (const name of imp.names) {
         const nameId = `${resolvedWithExt}:${name}`;
         addNode(nameId, "function", name, resolvedWithExt);
-        edges.push({ from_id: filePath, to_id: nameId, type: "uses_input", confidence: "auto" });
+        edges.push({ from_id: filePath, to_id: nameId, type: "uses_input", confidence: "inferred" });
       }
     } else {
       const pkgName = imp.source.startsWith("@") ? imp.source.split("/").slice(0, 2).join("/") : imp.source.split("/")[0];
       const pkgId = `pkg.${pkgName}`;
       addNode(pkgId, "input", pkgName);
-      edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "inferred" });
     }
   }
 
@@ -752,22 +752,22 @@ function extractPython(
   for (const fn of result.functions) {
     const nodeId = fn.parent ? `${filePath}:${fn.parent}.${fn.name}` : `${filePath}:${fn.name}`;
     addNode(nodeId, "function", fn.name, filePath, fn.row + 1);
-    edges.push({ from_id: filePath, to_id: nodeId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: nodeId, type: "defines", confidence: "extracted" });
     if (fn.parent) {
       const classId = `${filePath}:${fn.parent}`;
       addNode(classId, "class", fn.parent, filePath, 0);
-      edges.push({ from_id: classId, to_id: nodeId, type: "defines", confidence: "auto" });
+      edges.push({ from_id: classId, to_id: nodeId, type: "defines", confidence: "extracted" });
     }
   }
 
   for (const cls of result.classes) {
     const classId = `${filePath}:${cls.name}`;
     addNode(classId, "class", cls.name, filePath, cls.row + 1);
-    edges.push({ from_id: filePath, to_id: classId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: classId, type: "defines", confidence: "extracted" });
     for (const method of cls.methods) {
       const methodId = `${filePath}:${cls.name}.${method}`;
       addNode(methodId, "function", method, filePath, 0);
-      edges.push({ from_id: classId, to_id: methodId, type: "defines", confidence: "auto" });
+      edges.push({ from_id: classId, to_id: methodId, type: "defines", confidence: "extracted" });
     }
   }
 
@@ -776,20 +776,20 @@ function extractPython(
       const resolved = resolveRelativePath(filePath, imp.module);
       const resolvedWithExt = resolved.endsWith(".py") ? resolved : resolved + ".py";
       addNode(resolvedWithExt, "file", resolvedWithExt.split("/").pop() || resolvedWithExt, resolvedWithExt);
-      edges.push({ from_id: filePath, to_id: resolvedWithExt, type: "imports", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: resolvedWithExt, type: "imports", confidence: "extracted" });
     } else {
       const pkgName = imp.module.split(".")[0] || imp.names[0];
       if (pkgName && pkgName !== "*") {
         const pkgId = `pkg.${pkgName}`;
         addNode(pkgId, "input", pkgName);
-        edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "auto" });
+        edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "inferred" });
       }
     }
     for (const name of imp.names) {
       if (name === "*") continue;
       const nameId = `${filePath}:import:${name}`;
       addNode(nameId, "function", name, filePath, imp.row + 1);
-      edges.push({ from_id: filePath, to_id: nameId, type: "uses_input", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: nameId, type: "uses_input", confidence: "inferred" });
     }
   }
 
@@ -955,40 +955,40 @@ function extractRust(
   for (const fn of result.functions) {
     const nodeId = fn.parent ? `${filePath}:${fn.parent}::${fn.name}` : `${filePath}:${fn.name}`;
     addNode(nodeId, "function", fn.name, filePath, fn.row + 1);
-    edges.push({ from_id: filePath, to_id: nodeId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: nodeId, type: "defines", confidence: "extracted" });
     if (fn.parent) {
       const implId = `${filePath}:${fn.parent}`;
       addNode(implId, "struct", fn.parent, filePath, 0);
-      edges.push({ from_id: implId, to_id: nodeId, type: "defines", confidence: "auto" });
+      edges.push({ from_id: implId, to_id: nodeId, type: "defines", confidence: "extracted" });
     }
   }
 
   for (const s of result.structs) {
     const structId = `${filePath}:${s.name}`;
     addNode(structId, "struct", s.name, filePath, s.row + 1);
-    edges.push({ from_id: filePath, to_id: structId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: structId, type: "defines", confidence: "extracted" });
   }
 
   for (const e of result.enums) {
     const enumId = `${filePath}:${e.name}`;
     addNode(enumId, "concept", e.name, filePath, e.row + 1);
-    edges.push({ from_id: filePath, to_id: enumId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: enumId, type: "defines", confidence: "extracted" });
   }
 
   for (const t of result.traits) {
     const traitId = `${filePath}:${t.name}`;
     addNode(traitId, "interface", t.name, filePath, t.row + 1);
-    edges.push({ from_id: filePath, to_id: traitId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: traitId, type: "defines", confidence: "extracted" });
   }
 
   for (const imp of result.impls) {
     const implId = `${filePath}:${imp.target}`;
     addNode(implId, "struct", imp.target, filePath, imp.row + 1);
-    edges.push({ from_id: filePath, to_id: implId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: implId, type: "defines", confidence: "extracted" });
     for (const method of imp.methods) {
       const methodId = `${filePath}:${imp.target}::${method}`;
       addNode(methodId, "function", method, filePath, 0);
-      edges.push({ from_id: implId, to_id: methodId, type: "defines", confidence: "auto" });
+      edges.push({ from_id: implId, to_id: methodId, type: "defines", confidence: "extracted" });
     }
   }
 
@@ -999,13 +999,13 @@ function extractRust(
       const resolvedPath = resolved.replace(/::/g, "/");
       const possibleFile = resolvedPath + ".rs";
       addNode(possibleFile, "file", possibleFile.split("/").pop() || possibleFile, possibleFile);
-      edges.push({ from_id: filePath, to_id: possibleFile, type: "imports", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: possibleFile, type: "imports", confidence: "extracted" });
     } else {
       const crateName = path.split("::")[0];
       if (crateName && crateName !== "{" && crateName !== "*") {
         const pkgId = `pkg.${crateName}`;
         addNode(pkgId, "input", crateName);
-        edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "auto" });
+        edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "inferred" });
       }
     }
   }
@@ -1013,7 +1013,7 @@ function extractRust(
   for (const m of result.mods) {
     const modFile = m.name + ".rs";
     addNode(modFile, "file", modFile, modFile);
-    edges.push({ from_id: filePath, to_id: modFile, type: "imports", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: modFile, type: "imports", confidence: "extracted" });
   }
 
   for (const call of result.calls) {
@@ -1157,24 +1157,24 @@ function extractGo(
   for (const fn of result.functions) {
     const nodeId = fn.receiver ? `${filePath}:${fn.receiver}.${fn.name}` : `${filePath}:${fn.name}`;
     addNode(nodeId, "function", fn.name, filePath, fn.row + 1);
-    edges.push({ from_id: filePath, to_id: nodeId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: nodeId, type: "defines", confidence: "extracted" });
     if (fn.receiver) {
       const recvId = `${filePath}:${fn.receiver}`;
       addNode(recvId, "struct", fn.receiver, filePath, 0);
-      edges.push({ from_id: recvId, to_id: nodeId, type: "defines", confidence: "auto" });
+      edges.push({ from_id: recvId, to_id: nodeId, type: "defines", confidence: "extracted" });
     }
   }
 
   for (const s of result.structs) {
     const structId = `${filePath}:${s.name}`;
     addNode(structId, "struct", s.name, filePath, s.row + 1);
-    edges.push({ from_id: filePath, to_id: structId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: structId, type: "defines", confidence: "extracted" });
   }
 
   for (const iface of result.interfaces) {
     const ifaceId = `${filePath}:${iface.name}`;
     addNode(ifaceId, "interface", iface.name, filePath, iface.row + 1);
-    edges.push({ from_id: filePath, to_id: ifaceId, type: "defines", confidence: "auto" });
+    edges.push({ from_id: filePath, to_id: ifaceId, type: "defines", confidence: "extracted" });
   }
 
   for (const imp of result.imports) {
@@ -1182,7 +1182,7 @@ function extractGo(
     if (pkgName) {
       const pkgId = `pkg.${pkgName}`;
       addNode(pkgId, "input", pkgName);
-      edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "auto" });
+      edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "inferred" });
     }
   }
 
