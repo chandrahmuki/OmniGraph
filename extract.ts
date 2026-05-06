@@ -2,6 +2,8 @@ import { GraphDB } from "./db.ts";
 import { extract } from "./extractors/generic.ts";
 import { extractMemory } from "./extractors/memory.ts";
 import { initTreeSitter, extractWithTreeSitter, isTreeSitterReady, buildFunctionRegistry, FunctionRegistry } from "./extractors/tree-sitter.ts";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 export interface Config {
   scan_dirs: string[];
@@ -56,8 +58,6 @@ function shouldIgnoreFile(filePath: string, ignoreFiles: string[]): boolean {
 }
 
 export function loadConfig(projectPath: string): Config {
-  const fs = require("node:fs");
-  const path = require("node:path");
   const configPath = path.join(projectPath, "omnigraph.jsonc");
   const defaultPath = path.join(import.meta.dirname || __dirname, "config.default.jsonc");
 
@@ -74,9 +74,24 @@ export function loadConfig(projectPath: string): Config {
   return config;
 }
 
+function walkDir(dir: string, ignoreDirs: string[], baseDir: string): string[] {
+  const results: string[] = [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    const relativePath = path.relative(baseDir, fullPath);
+    if (shouldIgnore(relativePath, ignoreDirs)) continue;
+    if (entry.isSymbolicLink()) continue;
+    if (entry.isDirectory()) {
+      results.push(...walkDir(fullPath, ignoreDirs, baseDir));
+    } else {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
 export async function scanAndExtract(projectPath: string, db: GraphDB, incremental = false): Promise<void> {
-  const fs = require("node:fs");
-  const path = require("node:path");
   const config = loadConfig(projectPath);
 
   try {
@@ -97,13 +112,10 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
     const fullDir = path.resolve(projectPath, scanDir);
     if (!fs.existsSync(fullDir)) continue;
 
-    const files = fs.readdirSync(fullDir, { recursive: true }) as string[];
-    for (const file of files) {
-      const filePath = path.join(fullDir, file);
+    const files = walkDir(fullDir, config.ignore_dirs, projectPath);
+    for (const filePath of files) {
       const relativePath = path.relative(projectPath, filePath);
 
-      if (fs.statSync(filePath).isDirectory()) continue;
-      if (shouldIgnore(relativePath, config.ignore_dirs)) continue;
       if (shouldIgnoreFile(relativePath, config.ignore_files || [])) continue;
       if (!hasExtension(filePath, config.extensions)) continue;
 

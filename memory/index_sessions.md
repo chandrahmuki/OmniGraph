@@ -1,5 +1,5 @@
-# Sessions Index
+# Session Index
 
-- [2026-05-05_omnigraph-self-graph](./sessions/2026-05-05_omnigraph-self-graph/summary.md)
-- [2026-05-05_omnigraph-v3-planning](./sessions/2026-05-05_omnigraph-v3-planning/summary.md)
-- [2026-05-05_omnigraph-v3-semantic-memory](./sessions/2026-05-05_omnigraph-v3-semantic-memory/summary.md)
+| Date | Topic | Summary |
+|------|-------|---------|
+| 2026-05-06 | confidence-symlink-graph | Symlink walkDir fix, confidence labels, graph visualization |
