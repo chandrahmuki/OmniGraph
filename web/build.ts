@@ -241,7 +241,8 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       .data(validEdges)
       .join('line')
       .attr('stroke', d => edgeColors[d.type] || edgeColors.default)
-      .attr('stroke-width', 1.5)
+      .attr('stroke-width', d => d.confidence === 'extracted' ? 1.5 : 1)
+      .attr('stroke-dasharray', d => d.confidence === 'inferred' ? '4,3' : null)
       .attr('opacity', 0.5);
 
     const node = g.append('g')
