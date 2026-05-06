@@ -1,11 +1,12 @@
 import { GraphDB } from "./db.ts";
 import { extract } from "./extractors/generic.ts";
 import { extractMemory } from "./extractors/memory.ts";
-import { initTreeSitter, extractWithTreeSitter, isTreeSitterReady } from "./extractors/tree-sitter.ts";
+import { initTreeSitter, extractWithTreeSitter, isTreeSitterReady, buildFunctionRegistry, FunctionRegistry } from "./extractors/tree-sitter.ts";
 
 export interface Config {
   scan_dirs: string[];
   ignore_dirs: string[];
+  ignore_files?: string[];
   extensions: string[];
   memory?: {
     sessions_dir: string;
@@ -43,6 +44,17 @@ function hasExtension(filePath: string, extensions: string[]): boolean {
   return extensions.some(ext => filePath.endsWith(ext));
 }
 
+function shouldIgnoreFile(filePath: string, ignoreFiles: string[]): boolean {
+  const base = filePath.split("/").pop() || "";
+  return ignoreFiles.some(pattern => {
+    if (pattern.includes("*")) {
+      const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
+      return regex.test(base);
+    }
+    return base === pattern;
+  });
+}
+
 export function loadConfig(projectPath: string): Config {
   const fs = require("node:fs");
   const path = require("node:path");
@@ -69,9 +81,13 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
 
   try {
     await initTreeSitter();
-    console.log("Tree-sitter initialized (Nix grammar loaded)");
   } catch (e) {
     console.log("Tree-sitter not available, using regex fallback");
+  }
+
+  let knownFunctions: FunctionRegistry | undefined;
+  if (isTreeSitterReady()) {
+    knownFunctions = await buildFunctionRegistry(projectPath);
   }
 
   let skippedCount = 0;
@@ -88,6 +104,7 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
 
       if (fs.statSync(filePath).isDirectory()) continue;
       if (shouldIgnore(relativePath, config.ignore_dirs)) continue;
+      if (shouldIgnoreFile(relativePath, config.ignore_files || [])) continue;
       if (!hasExtension(filePath, config.extensions)) continue;
 
       try {
@@ -106,7 +123,7 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
 
         let result;
         if (isTreeSitterReady()) {
-          const tsResult = await extractWithTreeSitter(content, relativePath);
+          const tsResult = await extractWithTreeSitter(content, relativePath, knownFunctions);
           if (tsResult) {
             result = tsResult;
           } else {

@@ -1,0 +1,18 @@
+{
+  "project_name": "OmniGraph",
+  "scan_dirs": ["extractors", "web", "."],
+  "ignore_dirs": [".git", "node_modules", ".omnigraph", "target", "dist", "build", ".worktrees", "memory", "docs", "templates", "generated", "scripts", "grammars", "tests", "tests/screenshots"],
+  "ignore_files": ["*.min.js", "*.min.css", "*.lock"],
+  "extensions": [".ts", ".js"],
+  "memory": {
+    "sessions_dir": "memory/sessions",
+    "lessons_dir": "memory/lessons",
+    "skills_dir": "memory/skills"
+  },
+  "mappings": {
+    "auto_discover": {
+      "dirs": ["extractors", "web", "."],
+      "extensions": [".ts", ".js"]
+    }
+  }
+}
