@@ -24,3 +24,4 @@ Topic: confidence-symlink-graph
 ## Commits This Session
 - `22c7d58` [2026-05-06T14:20] fix: skip symlinks in walkDir, add confidence labels to all edges
 - `5e76754` [2026-05-06T14:28] feat: show confidence in graph (dashed lines for inferred edges)
+- `fe8cb38` [2026-05-06T14:45] feat: error/fix tracking — strict patterns, resolved_by edges, errors command, ⚠ icon in graph
