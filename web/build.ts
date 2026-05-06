@@ -261,11 +261,15 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
 
     const label = g.append('g')
       .selectAll('text')
-      .data(uniqueNodes.filter(d => d.connections > 1 || d.type === 'lesson_item' || d.type === 'lesson'))
+      .data(uniqueNodes.filter(d => d.connections > 1 || d.type === 'lesson_item' || d.type === 'lesson' || d.type === 'error'))
       .join('text')
-      .text(d => d.label.length > 25 ? d.label.slice(0, 25) + '...' : d.label)
-      .attr('font-size', d => d.type === 'lesson_item' ? 8 : 10)
-      .attr('fill', '#c9d1d9')
+      .text(d => {
+        const prefix = d.type === 'error' ? '⚠ ' : '';
+        const text = d.label.length > 25 ? d.label.slice(0, 25) + '...' : d.label;
+        return prefix + text;
+      })
+      .attr('font-size', d => d.type === 'lesson_item' ? 8 : d.type === 'error' ? 9 : 10)
+      .attr('fill', d => d.type === 'error' ? '#ef4444' : '#c9d1d9')
       .attr('dx', d => getRadius(d) + 4)
       .attr('dy', 3);
 

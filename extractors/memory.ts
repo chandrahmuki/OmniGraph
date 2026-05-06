@@ -35,8 +35,11 @@ const TRANSVERSE_PATTERNS = [
   /\b(build|cache|overlay|config|crash|fix|migration|install|override|rollback|update|error|block)\b/gi,
 ];
 
-const ERROR_PATTERN = /\b(crash|failure|broken|segfault|panic|OOM|unreachable|fatal|error|bug|issue|hang|freeze)\b/gi;
-const FIX_PATTERN = /\b(fix|fixed|resolve|resolved|patch|workaround|hack|mitigate)\b/gi;
+// Patterns for snapshot-style error/fix extraction
+// Error: lines starting with Error:/FATAL:/BUG: or containing explicit crash/failure descriptions
+const ERROR_PATTERN = /^(?:Error|FATAL|CRITICAL|PANIC|BUG|FAILURE):\s+/i;
+// Fix: explicit fix/resolve statements
+const FIX_PATTERN = /\b(Fixed|Resolved|Patched|Workaround|Mitigated|Solved)\b/i;
 
 const INPUT_PATTERN = /inputs\.(\w[\w-]*)/g;
 const LESSON_PATTERN = /lessons\/([\w-]+)\.md/g;
@@ -285,28 +288,53 @@ export function extractMemory(
       if (!fs.existsSync(summaryPath)) continue;
 
       const sessionId = entry;
+      const sessionErrors: string[] = [];
+      const sessionFixes: string[] = [];
+
       try {
         const content = fs.readFileSync(summaryPath, "utf-8");
         const lines = content.split("\n");
 
         for (const line of lines) {
-          const errorMatch = line.match(ERROR_PATTERN);
           const fixMatch = line.match(FIX_PATTERN);
+          const errorMatch = line.match(ERROR_PATTERN);
 
-          if (errorMatch) {
+          // If line describes a fix, extract the implicit error from it
+          if (fixMatch) {
+            const fixId = `fix:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
+            const fixLabel = line.trim().slice(0, 120);
+            addNode(fixId, "fix", fixLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
+            addEdge(sessionId, fixId, "applied_fix");
+            sessionFixes.push(fixId);
+
+            // Extract implicit error from fix line (e.g., "Fixed symlink crash" → error: "symlink crash")
+            const errorWords = line.match(/(?:crash|failure|broken|segfault|panic|fatal|hang|freeze)/i);
+            if (errorWords) {
+              const errorId = `error:${sessionId}:implicit_${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
+              const errorLabel = `Implicit: ${line.trim().slice(0, 120)}`;
+              addNode(errorId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
+              addEdge(sessionId, errorId, "detected_error");
+              addEdge(errorId, fixId, "resolved_by");
+              if (!sessionsForErrors.has(errorId)) sessionsForErrors.set(errorId, []);
+              sessionsForErrors.get(errorId)!.push(sessionId);
+            }
+          }
+          // Only count as error if NOT a fix line
+          else if (errorMatch) {
             const errorId = `error:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
             const errorLabel = line.trim().slice(0, 120);
             addNode(errorId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
             addEdge(sessionId, errorId, "detected_error");
             if (!sessionsForErrors.has(errorId)) sessionsForErrors.set(errorId, []);
             sessionsForErrors.get(errorId)!.push(sessionId);
+            sessionErrors.push(errorId);
           }
+        }
 
-          if (fixMatch) {
-            const fixId = `fix:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
-            const fixLabel = line.trim().slice(0, 120);
-            addNode(fixId, "fix", fixLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
-            addEdge(sessionId, fixId, "applied_fix");
+        // Link errors to fixes within same session
+        for (const errId of sessionErrors) {
+          for (const fixId of sessionFixes) {
+            addEdge(errId, fixId, "resolved_by");
           }
         }
       } catch {}

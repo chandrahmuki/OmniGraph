@@ -33,6 +33,7 @@ Commands:
   orphans  Detect unused inputs, dead refs, isolated nodes
   lessons  List lesson items (recent, for module, or all)
   hotspots Show most-modified files and recurring error patterns
+  errors   List errors in graph with their fix status
 
 Examples:
   omnigraph build
@@ -675,6 +676,53 @@ async function main() {
           }
         }
 
+        console.log("");
+      }
+
+      db.close();
+      break;
+    }
+
+    case "errors": {
+      const fs = require("node:fs");
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+      const db = new GraphDB(dbPath);
+      const errors = db.db.prepare(`
+        SELECT e.id, e.label, e.file_path,
+               (SELECT GROUP_CONCAT(f.label || ' [' || f.file_path || ']')
+                FROM edges er
+                JOIN nodes f ON er.to_id = f.id
+                WHERE er.from_id = e.id AND er.type = 'resolved_by') as fixes,
+               (SELECT GROUP_CONCAT(s.id)
+                FROM edges de
+                JOIN nodes s ON de.from_id = s.id
+                WHERE de.to_id = e.id AND de.type = 'detected_error') as sessions
+        FROM nodes e
+        WHERE e.type = 'error'
+        ORDER BY e.id
+      `).all();
+
+      if (!errors.length) {
+        console.log("No errors found in graph.");
+        db.close();
+        break;
+      }
+
+      console.log(`\n## Errors (${errors.length})\n`);
+      for (const err of errors as any[]) {
+        console.log(`### ${err.label}`);
+        console.log(`  📁 ${err.file_path}`);
+        if (err.sessions) {
+          console.log(`  📅 Sessions: ${err.sessions}`);
+        }
+        if (err.fixes) {
+          console.log(`  ✅ Fixes: ${err.fixes}`);
+        } else {
+          console.log(`  ⚠️  UNRESOLVED`);
+        }
         console.log("");
       }
 

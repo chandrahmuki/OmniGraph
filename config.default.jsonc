@@ -12,6 +12,7 @@
     "lesson_item": {"color": "#16a34a", "label": "Item de lesson"},
     "skill":    {"color": "#ec4899", "label": "Skill"},
     "error":    {"color": "#ef4444", "label": "Erreur"},
+    "fix":      {"color": "#22c55e", "label": "Fix"},
     "concept":  {"color": "#8b5cf6", "label": "Concept"},
     "function": {"color": "#f97316", "label": "Fonction"},
     "class":    {"color": "#6366f1", "label": "Classe"},
@@ -39,7 +40,10 @@
     "mentions":             {"label": "mentionne",         "color": "#8b949e"},
     "defines":              {"label": "definit",          "color": "#10b981"},
     "calls":                {"label": "appelle",          "color": "#f97316"},
-    "shares_dep":           {"label": "partage dep",      "color": "#8b949e"}
+    "shares_dep":           {"label": "partage dep",      "color": "#8b949e"},
+    "resolved_by":          {"label": "resolu par",       "color": "#22c55e"},
+    "detected_error":       {"label": "erreur detectee",  "color": "#ef4444"},
+    "applied_fix":          {"label": "fix applique",     "color": "#22c55e"}
   },
   "memory": {
     "sessions_dir": "memory/sessions",
