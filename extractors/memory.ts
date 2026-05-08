@@ -36,10 +36,14 @@ const TRANSVERSE_PATTERNS = [
 ];
 
 // Patterns for snapshot-style error/fix extraction
-// Error: lines starting with Error:/FATAL:/BUG: or containing explicit crash/failure descriptions
 const ERROR_PATTERN = /^(?:Error|FATAL|CRITICAL|PANIC|BUG|FAILURE):\s+/i;
+// Broader error detection for prose descriptions — only match when the context clearly describes a failure
+// Requires either: a failure verb + object, or explicit failure context
+const ERROR_PROSE_PATTERN = /\b(failed|fails|failure|broken|crash|crashed|segfault|panic|fatal|hang|hanged|froze|freeze|exception|bug|issue|problem|couldn't|unable to|unexpected|broke|regression)\b/i;
+// Additional context filter to reject false positives (lines that mention error words but aren't errors)
+const ERROR_CONTEXT_REJECT = /\b(plan|design|identify|extract|implement|add|feat|feature|improve|optimize|refactor|cleanup|remove|update|sync|show|display|visual)\b/i;
 // Fix: explicit fix/resolve statements
-const FIX_PATTERN = /\b(Fixed|Resolved|Patched|Workaround|Mitigated|Solved)\b/i;
+const FIX_PATTERN = /\b(Fixed|Resolved|Patched|Workaround|Mitigated|Solved|Fix)\b/i;
 
 const INPUT_PATTERN = /inputs\.(\w[\w-]*)/g;
 const LESSON_PATTERN = /lessons\/([\w-]+)\.md/g;
@@ -132,6 +136,19 @@ function parseLessonItems(content: string): LessonItem[] {
   }
 
   return items;
+}
+
+function normalizeErrorText(text: string): string {
+  return text
+    .replace(/^(?:Error|FATAL|CRITICAL|PANIC|BUG|FAILURE|Implicit:\s*|Prose:\s*):\s*/i, "")
+    .replace(/\b(Fixed|Resolved|Patched|Workaround|Mitigated|Solved|Fix)\b/gi, "")
+    .replace(/\b\d{4}-\d{2}-\d{2}T?\d{2}:\d{2}\b/g, "")
+    .replace(/`[^`]+`/g, "")
+    .replace(/\[.*?\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+    .slice(0, 80);
 }
 
 function parseSummary(content: string, sessionId: string, allMappings: Record<string, string>): {
@@ -280,6 +297,9 @@ export function extractMemory(
   }
 
   const sessionsForErrors = new Map<string, string[]>();
+  const errorToFileMap = new Map<string, string[]>();
+  const fixToFileMap = new Map<string, string[]>();
+  const errorCanonicalMap = new Map<string, string>();
 
   const sessionsDir2 = path.join(projectPath, config.sessions_dir);
   if (fs.existsSync(sessionsDir2)) {
@@ -295,9 +315,39 @@ export function extractMemory(
         const content = fs.readFileSync(summaryPath, "utf-8");
         const lines = content.split("\n");
 
+        // Extract files mentioned in this session (from Files Modified section and explicit paths)
+        const sessionFiles = new Set<string>();
+        let inFilesSection = false;
         for (const line of lines) {
+          if (/^## Files Modified$/i.test(line)) {
+            inFilesSection = true;
+            continue;
+          }
+          if (/^## /i.test(line) && inFilesSection) {
+            inFilesSection = false;
+          }
+          if (inFilesSection) {
+            const pathMatch = line.match(/(?:`([^`]+)`|([\w/.-]+\.\w+))/);
+            if (pathMatch) {
+              const p = (pathMatch[1] || pathMatch[2]).trim();
+              if (p && (p.includes("/") || p.endsWith(".ts") || p.endsWith(".nix") || p.endsWith(".py") || p.endsWith(".rs") || p.endsWith(".go") || p.endsWith(".js") || p.endsWith(".md"))) {
+                sessionFiles.add(p);
+              }
+            }
+          }
+        }
+
+        // Also extract file paths from any line in the session
+        const pathPattern = /(?:modules\/[\w-]+\.\w+|extractors\/[\w-]+\.\w+|web\/[\w-]+\.\w+|memory\/[\w/.-]+\.\w+|\.?[\w-]+\.ts|\.?[\w-]+\.nix|\.?[\w-]+\.py)/g;
+        for (const m of content.matchAll(pathPattern)) {
+          sessionFiles.add(m[0]);
+        }
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
           const fixMatch = line.match(FIX_PATTERN);
           const errorMatch = line.match(ERROR_PATTERN);
+          const errorProseMatch = !fixMatch && !errorMatch && line.match(ERROR_PROSE_PATTERN);
 
           // If line describes a fix, extract the implicit error from it
           if (fixMatch) {
@@ -307,34 +357,162 @@ export function extractMemory(
             addEdge(sessionId, fixId, "applied_fix");
             sessionFixes.push(fixId);
 
+            // Associate fix with session files
+            const relatedFiles = [...sessionFiles].filter(f => {
+              const fileName = f.split("/").pop() || "";
+              const baseName = fileName.replace(/\.\w+$/, "");
+              return line.toLowerCase().includes(fileName.toLowerCase()) ||
+                     line.toLowerCase().includes(baseName.toLowerCase()) ||
+                     line.toLowerCase().includes(f.toLowerCase());
+            });
+            if (relatedFiles.length > 0) {
+              fixToFileMap.set(fixId, relatedFiles);
+              for (const rf of relatedFiles) {
+                addNode(rf, "file", rf.split("/").pop() || rf, rf);
+                addEdge(fixId, rf, "affects");
+              }
+            }
+
             // Extract implicit error from fix line (e.g., "Fixed symlink crash" → error: "symlink crash")
-            const errorWords = line.match(/(?:crash|failure|broken|segfault|panic|fatal|hang|freeze)/i);
+            const errorWords = line.match(/(?:crash|failure|broken|segfault|panic|fatal|hang|freeze|bug|issue|problem)/i);
             if (errorWords) {
-              const errorId = `error:${sessionId}:implicit_${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
-              const errorLabel = `Implicit: ${line.trim().slice(0, 120)}`;
-              addNode(errorId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
-              addEdge(sessionId, errorId, "detected_error");
-              addEdge(errorId, fixId, "resolved_by");
-              if (!sessionsForErrors.has(errorId)) sessionsForErrors.set(errorId, []);
-              sessionsForErrors.get(errorId)!.push(sessionId);
+              const normalized = normalizeErrorText(line);
+              const canonicalId = `error:dedup_${normalized.replace(/[^a-zA-Z0-9]/g, "_")}`;
+
+              if (!errorCanonicalMap.has(canonicalId)) {
+                errorCanonicalMap.set(canonicalId, canonicalId);
+                const errorLabel = `Dedup: ${line.trim().slice(0, 120)}`;
+                addNode(canonicalId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
+                addAnnotation(canonicalId, "recurrence_count", "1");
+              } else {
+                const existing = nodes.find(n => n.id === canonicalId);
+                if (existing) {
+                  const countAnn = annotations.find(a => a.node_id === canonicalId && a.key === "recurrence_count");
+                  if (countAnn) {
+                    const newCount = parseInt(countAnn.value) + 1;
+                    countAnn.value = String(newCount);
+                  }
+                }
+              }
+
+              addEdge(sessionId, canonicalId, "detected_error");
+              addEdge(canonicalId, fixId, "resolved_by");
+              if (!sessionsForErrors.has(canonicalId)) sessionsForErrors.set(canonicalId, []);
+              sessionsForErrors.get(canonicalId)!.push(sessionId);
+              sessionErrors.push(canonicalId);
+
+              // Associate error with same files as the fix
+              if (relatedFiles.length > 0) {
+                errorToFileMap.set(canonicalId, relatedFiles);
+                for (const rf of relatedFiles) {
+                  addEdge(canonicalId, rf, "affects");
+                }
+              }
             }
           }
-          // Only count as error if NOT a fix line
+          // Explicit error line (Error:, FATAL:, etc.)
           else if (errorMatch) {
-            const errorId = `error:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
-            const errorLabel = line.trim().slice(0, 120);
-            addNode(errorId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
-            addEdge(sessionId, errorId, "detected_error");
-            if (!sessionsForErrors.has(errorId)) sessionsForErrors.set(errorId, []);
-            sessionsForErrors.get(errorId)!.push(sessionId);
-            sessionErrors.push(errorId);
+            const normalized = normalizeErrorText(line);
+            const canonicalId = `error:dedup_${normalized.replace(/[^a-zA-Z0-9]/g, "_")}`;
+
+            if (!errorCanonicalMap.has(canonicalId)) {
+              errorCanonicalMap.set(canonicalId, canonicalId);
+              const errorLabel = line.trim().slice(0, 120);
+              addNode(canonicalId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
+              addAnnotation(canonicalId, "recurrence_count", "1");
+            } else {
+              const existing = nodes.find(n => n.id === canonicalId);
+              if (existing) {
+                const countAnn = annotations.find(a => a.node_id === canonicalId && a.key === "recurrence_count");
+                if (countAnn) {
+                  const newCount = parseInt(countAnn.value) + 1;
+                  countAnn.value = String(newCount);
+                }
+              }
+            }
+
+            addEdge(sessionId, canonicalId, "detected_error");
+            if (!sessionsForErrors.has(canonicalId)) sessionsForErrors.set(canonicalId, []);
+            sessionsForErrors.get(canonicalId)!.push(sessionId);
+            sessionErrors.push(canonicalId);
+
+            // Associate error with session files mentioned near this line
+            const nearbyLines = lines.slice(Math.max(0, i - 3), Math.min(lines.length, i + 3)).join(" ");
+            const relatedFiles = [...sessionFiles].filter(f => {
+              const fileName = f.split("/").pop() || "";
+              const baseName = fileName.replace(/\.\w+$/, "");
+              return nearbyLines.toLowerCase().includes(fileName.toLowerCase()) ||
+                     nearbyLines.toLowerCase().includes(baseName.toLowerCase()) ||
+                     nearbyLines.toLowerCase().includes(f.toLowerCase());
+            });
+            if (relatedFiles.length > 0) {
+              errorToFileMap.set(canonicalId, relatedFiles);
+              for (const rf of relatedFiles) {
+                addNode(rf, "file", rf.split("/").pop() || rf, rf);
+                addEdge(canonicalId, rf, "affects");
+              }
+            }
+          }
+          // Prose error detection (lines describing failures without explicit Error: prefix)
+          else if (errorProseMatch) {
+            // Reject lines that mention error words but describe plans/features/improvements, not actual failures
+            if (ERROR_CONTEXT_REJECT.test(line)) continue;
+
+            // Only capture if the line is substantive (not just a word match in passing)
+            const trimmed = line.trim();
+            if (trimmed.length > 20 && !trimmed.startsWith("#") && !trimmed.startsWith("|") && !trimmed.startsWith("- `")) {
+              const normalized = normalizeErrorText(trimmed);
+              const canonicalId = `error:dedup_${normalized.replace(/[^a-zA-Z0-9]/g, "_")}`;
+
+              if (!errorCanonicalMap.has(canonicalId)) {
+                errorCanonicalMap.set(canonicalId, canonicalId);
+                const errorLabel = `Prose: ${trimmed.slice(0, 120)}`;
+                addNode(canonicalId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
+                addAnnotation(canonicalId, "recurrence_count", "1");
+              } else {
+                const existing = nodes.find(n => n.id === canonicalId);
+                if (existing) {
+                  const countAnn = annotations.find(a => a.node_id === canonicalId && a.key === "recurrence_count");
+                  if (countAnn) {
+                    const newCount = parseInt(countAnn.value) + 1;
+                    countAnn.value = String(newCount);
+                  }
+                }
+              }
+
+              addEdge(sessionId, canonicalId, "detected_error");
+              if (!sessionsForErrors.has(canonicalId)) sessionsForErrors.set(canonicalId, []);
+              sessionsForErrors.get(canonicalId)!.push(sessionId);
+              sessionErrors.push(canonicalId);
+
+              // Associate with session files
+              const relatedFiles = [...sessionFiles].filter(f => {
+                const fileName = f.split("/").pop() || "";
+                const baseName = fileName.replace(/\.\w+$/, "");
+                return trimmed.toLowerCase().includes(fileName.toLowerCase()) ||
+                       trimmed.toLowerCase().includes(baseName.toLowerCase()) ||
+                       trimmed.toLowerCase().includes(f.toLowerCase());
+              });
+              if (relatedFiles.length > 0) {
+                errorToFileMap.set(canonicalId, relatedFiles);
+                for (const rf of relatedFiles) {
+                  addNode(rf, "file", rf.split("/").pop() || rf, rf);
+                  addEdge(canonicalId, rf, "affects");
+                }
+              }
+            }
           }
         }
 
-        // Link errors to fixes within same session
+        // Link errors to fixes within same session — only if they share file associations or are adjacent
         for (const errId of sessionErrors) {
+          const errFiles = errorToFileMap.get(errId) || [];
           for (const fixId of sessionFixes) {
-            addEdge(errId, fixId, "resolved_by");
+            const fixFiles = fixToFileMap.get(fixId) || [];
+            const shareFiles = errFiles.some(f => fixFiles.includes(f));
+            if (shareFiles || errFiles.length === 0 || fixFiles.length === 0) {
+              addEdge(errId, fixId, "resolved_by");
+            }
           }
         }
       } catch {}

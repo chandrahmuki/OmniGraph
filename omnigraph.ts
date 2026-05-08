@@ -34,6 +34,8 @@ Commands:
   lessons  List lesson items (recent, for module, or all)
   hotspots Show most-modified files and recurring error patterns
   errors   List errors in graph with their fix status
+           --file=<path>  Show only errors affecting a specific file
+           --unresolved   Show only unresolved errors
 
 Examples:
   omnigraph build
@@ -230,12 +232,30 @@ async function main() {
       const sessions = up.filter(e => e.type === "session_modified").map(e => e.from_id);
       const lessons = up.filter(e => e.type === "lesson_applies_to").map(e => e.from_id);
 
+      const errorsAffecting = allEdges
+        .filter(e => e.to_id === target && e.type === "affects")
+        .map(e => e.from_id)
+        .filter(nodeId => {
+          const node = nodeMap.get(nodeId);
+          return node && (node.type === "error" || node.type === "fix");
+        });
+
+      const errorNodes = errorsAffecting.filter(id => {
+        const node = nodeMap.get(id);
+        return node && node.type === "error";
+      });
+
+      const fixNodes = errorsAffecting.filter(id => {
+        const node = nodeMap.get(id);
+        return node && node.type === "fix";
+      });
+
       const lessonItems = up
         .filter(e => e.type === "lesson_applies_to")
         .map(e => nodeMap.get(e.from_id))
         .filter((n: any) => n && n.type === "lesson_item");
 
-      const risk = usedBy.length > 3 ? "HIGH" : usedBy.length > 0 ? "MEDIUM" : "LOW";
+      const risk = (usedBy.length > 3 || errorNodes.length > 0) ? "HIGH" : usedBy.length > 0 ? "MEDIUM" : "LOW";
 
       console.log(`\n## ${target}`);
       if (imports.length) console.log(`↓ imports: ${imports.join(", ")}`);
@@ -248,6 +268,33 @@ async function main() {
       else console.log(`↑ used_by: (none)`);
       if (sessions.length) console.log(`📝 sessions: ${sessions.slice(-5).join(", ")}`);
       if (lessons.length) console.log(`📖 lessons: ${lessons.join(", ")}`);
+      if (errorNodes.length) {
+        console.log(`🚨 PAST ERRORS (${errorNodes.length}):`);
+        for (const errId of errorNodes) {
+          const errNode = nodeMap.get(errId);
+          if (errNode) {
+            const fixEdges = allEdges.filter(e => e.from_id === errId && e.type === "resolved_by");
+            const fixLabels = fixEdges.map(e => {
+              const fixNode = nodeMap.get(e.to_id);
+              return fixNode ? fixNode.label.slice(0, 80) : e.to_id;
+            });
+            const sessionEdges = allEdges.filter(e => e.to_id === errId && e.type === "detected_error");
+            const sessionIds = sessionEdges.map(e => e.from_id);
+            console.log(`  ⚠️  ${errNode.label.slice(0, 100)}`);
+            if (fixLabels.length) console.log(`    ✅ Resolved by: ${fixLabels.join("; ")}`);
+            if (sessionIds.length) console.log(`    📅 From session: ${sessionIds.join(", ")}`);
+          }
+        }
+      }
+      if (fixNodes.length && !errorNodes.length) {
+        console.log(`🔧 FIXES APPLIED (${fixNodes.length}):`);
+        for (const fixId of fixNodes) {
+          const fixNode = nodeMap.get(fixId);
+          if (fixNode) {
+            console.log(`  ✅ ${fixNode.label.slice(0, 100)}`);
+          }
+        }
+      }
       if (lessonItems.length) {
         console.log(`💡 lesson items:`);
         for (const li of lessonItems) {
@@ -690,7 +737,14 @@ async function main() {
         process.exit(1);
       }
       const db = new GraphDB(dbPath);
-      const errors = db.db.prepare(`
+      const allEdges = db.getAllEdges();
+      const allNodes = db.getAllNodes();
+      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+
+      const fileFilter = args.find(a => a.startsWith("--file="))?.replace("--file=", "");
+      const unresolvedOnly = args.includes("--unresolved") || args.includes("-u");
+
+      let errors = db.db.prepare(`
         SELECT e.id, e.label, e.file_path,
                (SELECT GROUP_CONCAT(f.label || ' [' || f.file_path || ']')
                 FROM edges er
@@ -703,16 +757,27 @@ async function main() {
         FROM nodes e
         WHERE e.type = 'error'
         ORDER BY e.id
-      `).all();
+      `).all() as any[];
+
+      if (fileFilter) {
+        const affectedErrorIds = allEdges
+          .filter(e => e.to_id === fileFilter && e.type === "affects")
+          .map(e => e.from_id);
+        errors = errors.filter(e => affectedErrorIds.includes(e.id));
+        console.log(`\n## Errors affecting ${fileFilter} (${errors.length})\n`);
+      } else {
+        console.log(`\n## Errors (${errors.length})\n`);
+      }
 
       if (!errors.length) {
-        console.log("No errors found in graph.");
+        console.log("No errors found.");
         db.close();
         break;
       }
 
-      console.log(`\n## Errors (${errors.length})\n`);
-      for (const err of errors as any[]) {
+      for (const err of errors) {
+        if (unresolvedOnly && err.fixes) continue;
+
         console.log(`### ${err.label}`);
         console.log(`  📁 ${err.file_path}`);
         if (err.sessions) {
@@ -722,6 +787,12 @@ async function main() {
           console.log(`  ✅ Fixes: ${err.fixes}`);
         } else {
           console.log(`  ⚠️  UNRESOLVED`);
+        }
+
+        const affectsEdges = allEdges.filter(e => e.from_id === err.id && e.type === "affects");
+        if (affectsEdges.length) {
+          const affectedFiles = affectsEdges.map(e => e.to_id);
+          console.log(`  📂 Affects: ${affectedFiles.join(", ")}`);
         }
         console.log("");
       }
