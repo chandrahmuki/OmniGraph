@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Pre-commit hook for OmniGraph
+# Auto-updates graph on commits
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+echo "🔍 OmniGraph pre-commit hook..."
+
+# Check if graph exists
+if [ ! -f "$PROJECT_ROOT/.omnigraph/graph.db" ]; then
+  echo "⚠️  Graph not found. Run 'omnigraph build' first."
+  exit 0
+fi
+
+# Get changed files
+CHANGED=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|nix|py|rs|go|js)$' || true)
+
+if [ -z "$CHANGED" ]; then
+  echo "✓ No code changes to scan"
+  exit 0
+fi
+
+echo "📝 Changed files:"
+for file in $CHANGED; do
+  echo "   $file"
+done
+
+# Quick impact check on changed files
+echo ""
+echo "📊 Impact preview:"
+for file in $CHANGED; do
+  if [ -f "$PROJECT_ROOT/$file" ]; then
+    bun run omnigraph.ts check "$file" 2>/dev/null | head -5 || true
+  fi
+done
+
+echo ""
+echo "✓ Pre-commit check complete"

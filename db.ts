@@ -72,14 +72,13 @@ export class GraphDB {
       );
       CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
       CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
+      CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(type);
+      CREATE INDEX IF NOT EXISTS idx_edges_from_type ON edges(from_id, type);
+      CREATE INDEX IF NOT EXISTS idx_edges_to_type ON edges(to_id, type);
 
-      CREATE TABLE IF NOT EXISTS annotations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        node_id TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL
-      );
       CREATE INDEX IF NOT EXISTS idx_annotations_node ON annotations(node_id);
+      CREATE INDEX IF NOT EXISTS idx_annotations_key ON annotations(key);
+      CREATE INDEX IF NOT EXISTS idx_annotations_node_key ON annotations(node_id, key);
 
       CREATE TABLE IF NOT EXISTS concepts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

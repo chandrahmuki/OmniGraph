@@ -1,0 +1,75 @@
+# OmniGraph bash completion
+# Place in /etc/bash_completion.d/omnigraph or source from .bashrc
+
+_omnigraph() {
+  local cur="${COMP_WORDS[COMP_CWORD]}"
+  local commands="build save query search check impact path git-log orphans export import diff health stats lessons hotspots errors issues decisions changes timeline semantic watch summary"
+  local check_opts="--json"
+  local build_opts="--incremental -i"
+  local semantic_opts="--type= --top="
+  local errors_opts="--file= --unresolved"
+  local issues_opts="--file= --unresolved"
+  local decisions_opts="--file="
+  local changes_opts="--file= --type="
+  local lessons_opts="--recent --module="
+
+  if [[ ${COMP_CWORD} -eq 1 ]]; then
+    COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+  elif [[ ${COMP_CWORD} -eq 2 ]]; then
+    case "${COMP_WORDS[1]}" in
+      check|impact|timeline)
+        COMPREPLY=($(compgen -f -- "$cur"))
+        ;;
+      path)
+        COMPREPLY=($(compgen -f -- "$cur"))
+        ;;
+      semantic)
+        COMPREPLY=($(compgen -W "$semantic_opts" -- "$cur"))
+        ;;
+      export)
+        COMPREPLY=($(compgen -f -- "$cur"))
+        ;;
+      import)
+        COMPREPLY=($(compgen -f -X '!*.json' -- "$cur"))
+        ;;
+      diff)
+        COMPREPLY=($(compgen -f -X '!*.db' -- "$cur"))
+        ;;
+      *)
+        COMPREPLY=()
+        ;;
+    esac
+  else
+    case "${COMP_WORDS[1]}" in
+      check)
+        COMPREPLY=($(compgen -W "$check_opts" -- "$cur"))
+        ;;
+      build)
+        COMPREPLY=($(compgen -W "$build_opts" -- "$cur"))
+        ;;
+      semantic)
+        COMPREPLY=($(compgen -W "$semantic_opts" -- "$cur"))
+        ;;
+      errors)
+        COMPREPLY=($(compgen -W "$errors_opts" -- "$cur"))
+        ;;
+      issues)
+        COMPREPLY=($(compgen -W "$issues_opts" -- "$cur"))
+        ;;
+      decisions)
+        COMPREPLY=($(compgen -W "$decisions_opts" -- "$cur"))
+        ;;
+      changes)
+        COMPREPLY=($(compgen -W "$changes_opts" -- "$cur"))
+        ;;
+      lessons)
+        COMPREPLY=($(compgen -W "$lessons_opts" -- "$cur"))
+        ;;
+      *)
+        COMPREPLY=()
+        ;;
+    esac
+  fi
+}
+
+complete -F _omnigraph omnigraph

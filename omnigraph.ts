@@ -105,6 +105,7 @@ Commands:
                <query>        Required: search query
                --type=<type>  Filter by node type
                --top=<n>      Number of results (default: 10)
+  session-resume  Show last session summary and context check
 
 Examples:
   omnigraph save "feat: workaround detection"
@@ -125,6 +126,7 @@ Examples:
   omnigraph decisions --file=modules/niri.nix
   omnigraph changes --type=replace
   omnigraph timeline modules/niri.nix
+  omnigraph session-resume
 `);
 }
 
@@ -789,6 +791,97 @@ Topic: ${topic}
       } catch (e) {
         console.error("Failed to run git log:", (e as Error).message);
       }
+      break;
+    }
+
+    case "session-resume": {
+      const sessionsDir = path.join(projectPath, "memory/sessions");
+      if (!fs.existsSync(sessionsDir)) {
+        console.log("No sessions found. Create a session with 'omnigraph save' first.");
+        break;
+      }
+
+      const entries = fs.readdirSync(sessionsDir).map(entry => {
+        const summaryPath = path.join(sessionsDir, entry, "summary.md");
+        const mtime = fs.existsSync(summaryPath) ? fs.statSync(summaryPath).mtimeMs : 0;
+        return { entry, mtime };
+      }).sort((a, b) => b.mtime - a.mtime);
+
+      if (entries.length === 0) {
+        console.log("No sessions found.");
+        break;
+      }
+
+      const latestSession = entries[0].entry;
+      const summaryPath = path.join(sessionsDir, latestSession, "summary.md");
+      if (!fs.existsSync(summaryPath)) {
+        console.log(`No summary found for session: ${latestSession}`);
+        break;
+      }
+
+      const content = fs.readFileSync(summaryPath, "utf-8");
+      const topicMatch = content.match(/^Topic:\s*(.+)$/m);
+      const genMatch = content.match(/^Generated:\s*(.+)$/m);
+      const topic = topicMatch ? topicMatch[1].trim() : latestSession;
+      const generated = genMatch ? genMatch[1].trim() : "unknown";
+
+      console.log(`\n## Session Resume: ${topic}`);
+      console.log(`Generated: ${generated}\n`);
+
+      const filesModified = new Set<string>();
+      let inFilesSection = false;
+      for (const line of content.split("\n")) {
+        if (/^## Files Modified$/i.test(line)) {
+          inFilesSection = true;
+          continue;
+        }
+        if (/^## /i.test(line) && inFilesSection) {
+          inFilesSection = false;
+        }
+        if (inFilesSection && line.startsWith("- ")) {
+          const pathMatch = line.match(/(?:`([^`]+)`|([\w/.-]+\.\w+))/);
+          if (pathMatch) {
+            const p = (pathMatch[1] || pathMatch[2]).trim();
+            if (p && (p.includes("/") || p.endsWith(".ts") || p.endsWith(".nix") || p.endsWith(".py") || p.endsWith(".rs") || p.endsWith(".go") || p.endsWith(".js"))) {
+              filesModified.add(p);
+            }
+          }
+        }
+      }
+
+      if (filesModified.size === 0) {
+        console.log("No files modified in this session.");
+        break;
+      }
+
+      console.log(`## Files Modified (${filesModified.size})\n`);
+      for (const f of filesModified) {
+        console.log(`  - ${f}`);
+      }
+
+      if (!fs.existsSync(dbPath)) {
+        console.log("\nDB not found. Run 'omnigraph build' first.");
+        break;
+      }
+
+      console.log("\n## Context Check\n");
+      const db = new GraphDB(dbPath);
+      const allEdges = db.getAllEdges();
+      const allNodes = db.getAllNodes();
+      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+
+      for (const target of filesModified) {
+        const usedBy = allEdges.filter(e => e.to_id === target && e.type !== "indexes").map(e => e.from_id);
+        const sessions = allEdges.filter(e => e.to_id === target && e.type === "session_modified").map(e => e.from_id);
+        const errors = allEdges.filter(e => e.to_id === target && e.type === "affects")
+          .map(e => e.from_id)
+          .filter(id => { const n = nodeMap.get(id); return n && n.type === "error"; });
+
+        const risk = usedBy.length > 3 || errors.length > 0 ? "HIGH" : usedBy.length > 0 ? "MEDIUM" : "LOW";
+        console.log(`${target}: ${usedBy.length} dependents, ${sessions.length} sessions, ${errors.length} errors [${risk}]`);
+      }
+
+      db.close();
       break;
     }
 
