@@ -837,6 +837,10 @@ async function main() {
                 FROM edges er
                 JOIN nodes f ON er.to_id = f.id
                 WHERE er.from_id = e.id AND er.type = 'resolved_by') as fixes,
+               (SELECT GROUP_CONCAT(w.label || ' [' || w.file_path || ']')
+                FROM edges er
+                JOIN nodes w ON er.to_id = w.id
+                WHERE er.from_id = e.id AND er.type = 'workaround_by') as workarounds,
                (SELECT GROUP_CONCAT(s.id)
                 FROM edges de
                 JOIN nodes s ON de.from_id = s.id
@@ -863,7 +867,7 @@ async function main() {
       }
 
       for (const err of errors) {
-        if (unresolvedOnly && err.fixes) continue;
+        if (unresolvedOnly && (err.fixes || err.workarounds)) continue;
 
         console.log(`### ${err.label}`);
         console.log(`  📁 ${err.file_path}`);
@@ -872,7 +876,11 @@ async function main() {
         }
         if (err.fixes) {
           console.log(`  ✅ Fixes: ${err.fixes}`);
-        } else {
+        }
+        if (err.workarounds) {
+          console.log(`  🔄 Workarounds: ${err.workarounds}`);
+        }
+        if (!err.fixes && !err.workarounds) {
           console.log(`  ⚠️  UNRESOLVED`);
         }
 
@@ -911,7 +919,11 @@ async function main() {
                (SELECT GROUP_CONCAT(c.label)
                 FROM edges e
                 JOIN nodes c ON e.to_id = n.id
-                WHERE e.from_id = c.id AND e.type = 'resolves') as resolved_by
+                WHERE e.from_id = c.id AND e.type = 'resolves') as resolved_by,
+               (SELECT GROUP_CONCAT(c.label)
+                FROM edges e
+                JOIN nodes c ON e.to_id = n.id
+                WHERE e.from_id = c.id AND e.type = 'workaround_for') as workaround_by
         FROM nodes n
         WHERE n.type = 'issue'
         ORDER BY n.created_at
@@ -934,7 +946,7 @@ async function main() {
       }
 
       for (const issue of issues) {
-        if (unresolvedOnly && issue.resolved_by) continue;
+        if (unresolvedOnly && (issue.resolved_by || issue.workaround_by)) continue;
 
         console.log(`### ${issue.label}`);
         console.log(`  📅 Detected: ${issue.created_at || "unknown"}`);
@@ -943,7 +955,11 @@ async function main() {
         }
         if (issue.resolved_by) {
           console.log(`  ✅ Resolved by: ${issue.resolved_by}`);
-        } else {
+        }
+        if (issue.workaround_by) {
+          console.log(`  🔄 Workaround: ${issue.workaround_by}`);
+        }
+        if (!issue.resolved_by && !issue.workaround_by) {
           console.log(`  ⚠️  UNRESOLVED`);
         }
 

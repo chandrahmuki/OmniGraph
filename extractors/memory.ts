@@ -43,7 +43,9 @@ const ERROR_PROSE_PATTERN = /\b(failed|fails|failure|broken|crash|crashed|segfau
 // Additional context filter to reject false positives (lines that mention error words but aren't errors)
 const ERROR_CONTEXT_REJECT = /\b(plan|design|identify|extract|implement|add|feat|feature|improve|optimize|refactor|cleanup|remove|update|sync|show|display|visual)\b/i;
 // Fix: explicit fix/resolve statements
-const FIX_PATTERN = /\b(Fixed|Resolved|Patched|Workaround|Mitigated|Solved|Fix)\b/i;
+const FIX_PATTERN = /\b(Fixed|Resolved|Patched|Solved|Fix|Réparé|Corrigé|Fixé)\b/i;
+// Workaround: replacement, removal, or bypass without fixing root cause
+const WORKAROUND_PATTERN = /\b(Replaced|Switched|Swapped|Removed|Workaround|Bypass|Disabled|Avoid|Fallback|Remplacé|Supprimé|Désactivé|Évité|Contourné)\b/i;
 
 const ISSUE_PATTERNS = [
   /\b(has a bug|crashes|broken|incompatible|doesn.t work|fails to|regression|error when|issue with|problem with)\b/i,
@@ -315,6 +317,7 @@ export function extractMemory(
   const sessionsForErrors = new Map<string, string[]>();
   const errorToFileMap = new Map<string, string[]>();
   const fixToFileMap = new Map<string, string[]>();
+  const workaroundToFileMap = new Map<string, string[]>();
   const errorCanonicalMap = new Map<string, string>();
 
   const sessionsDir2 = path.join(projectPath, config.sessions_dir);
@@ -323,9 +326,10 @@ export function extractMemory(
       const summaryPath = path.join(sessionsDir2, entry, "summary.md");
       if (!fs.existsSync(summaryPath)) continue;
 
-      const sessionId = entry;
-      const sessionErrors: string[] = [];
-      const sessionFixes: string[] = [];
+        const sessionId = entry;
+        const sessionErrors: string[] = [];
+        const sessionFixes: string[] = [];
+        const sessionWorkarounds: string[] = [];
 
       try {
         const content = fs.readFileSync(summaryPath, "utf-8");
@@ -365,15 +369,24 @@ export function extractMemory(
           const errorMatch = line.match(ERROR_PATTERN);
           const errorProseMatch = !fixMatch && !errorMatch && line.match(ERROR_PROSE_PATTERN);
 
-          // If line describes a fix, extract the implicit error from it
+          // If line describes a fix or workaround, extract the implicit error from it
           if (fixMatch) {
-            const fixId = `fix:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
-            const fixLabel = line.trim().slice(0, 120);
-            addNode(fixId, "fix", fixLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
-            addEdge(sessionId, fixId, "applied_fix");
-            sessionFixes.push(fixId);
+            const isWorkaround = WORKAROUND_PATTERN.test(line);
+            const resolutionType = isWorkaround ? "workaround" : "fix";
+            const nodeId = isWorkaround
+              ? `workaround:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`
+              : `fix:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
+            const nodeType = isWorkaround ? "workaround" : "fix";
+            const nodeLabel = line.trim().slice(0, 120);
+            addNode(nodeId, nodeType, nodeLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
+            addEdge(sessionId, nodeId, isWorkaround ? "applied_workaround" : "applied_fix");
+            if (isWorkaround) {
+              sessionWorkarounds.push(nodeId);
+            } else {
+              sessionFixes.push(nodeId);
+            }
 
-            // Associate fix with session files
+            // Associate fix/workaround with session files
             const relatedFiles = [...sessionFiles].filter(f => {
               const fileName = f.split("/").pop() || "";
               const baseName = fileName.replace(/\.\w+$/, "");
@@ -382,14 +395,18 @@ export function extractMemory(
                      line.toLowerCase().includes(f.toLowerCase());
             });
             if (relatedFiles.length > 0) {
-              fixToFileMap.set(fixId, relatedFiles);
+              if (isWorkaround) {
+                workaroundToFileMap.set(nodeId, relatedFiles);
+              } else {
+                fixToFileMap.set(nodeId, relatedFiles);
+              }
               for (const rf of relatedFiles) {
                 addNode(rf, "file", rf.split("/").pop() || rf, rf);
-                addEdge(fixId, rf, "affects");
+                addEdge(nodeId, rf, "affects");
               }
             }
 
-            // Extract implicit error from fix line (e.g., "Fixed symlink crash" → error: "symlink crash")
+            // Extract implicit error from fix/workaround line
             const errorWords = line.match(/(?:crash|failure|broken|segfault|panic|fatal|hang|freeze|bug|issue|problem)/i);
             if (errorWords) {
               const normalized = normalizeErrorText(line);
@@ -412,12 +429,13 @@ export function extractMemory(
               }
 
               addEdge(sessionId, canonicalId, "detected_error");
-              addEdge(canonicalId, fixId, "resolved_by");
+              addEdge(canonicalId, nodeId, isWorkaround ? "workaround_by" : "resolved_by");
+              addAnnotation(canonicalId, "resolution_type", resolutionType);
               if (!sessionsForErrors.has(canonicalId)) sessionsForErrors.set(canonicalId, []);
               sessionsForErrors.get(canonicalId)!.push(sessionId);
               sessionErrors.push(canonicalId);
 
-              // Associate error with same files as the fix
+              // Associate error with same files as the fix/workaround
               if (relatedFiles.length > 0) {
                 errorToFileMap.set(canonicalId, relatedFiles);
                 for (const rf of relatedFiles) {
@@ -501,26 +519,54 @@ export function extractMemory(
               sessionsForErrors.get(canonicalId)!.push(sessionId);
               sessionErrors.push(canonicalId);
 
-              // Associate with session files
-              const relatedFiles = [...sessionFiles].filter(f => {
-                const fileName = f.split("/").pop() || "";
-                const baseName = fileName.replace(/\.\w+$/, "");
-                return trimmed.toLowerCase().includes(fileName.toLowerCase()) ||
-                       trimmed.toLowerCase().includes(baseName.toLowerCase()) ||
-                       trimmed.toLowerCase().includes(f.toLowerCase());
-              });
-              if (relatedFiles.length > 0) {
-                errorToFileMap.set(canonicalId, relatedFiles);
-                for (const rf of relatedFiles) {
-                  addNode(rf, "file", rf.split("/").pop() || rf, rf);
-                  addEdge(canonicalId, rf, "affects");
+              // Check if the same line also describes a workaround (e.g., "Removed X (broken)")
+              if (WORKAROUND_PATTERN.test(line)) {
+                const waId = `workaround:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
+                const waLabel = trimmed.slice(0, 120);
+                addNode(waId, "workaround", waLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
+                addEdge(sessionId, waId, "applied_workaround");
+                addEdge(canonicalId, waId, "workaround_by");
+                addAnnotation(canonicalId, "resolution_type", "workaround");
+                sessionWorkarounds.push(waId);
+
+                const relatedFiles = [...sessionFiles].filter(f => {
+                  const fileName = f.split("/").pop() || "";
+                  const baseName = fileName.replace(/\.\w+$/, "");
+                  return trimmed.toLowerCase().includes(fileName.toLowerCase()) ||
+                         trimmed.toLowerCase().includes(baseName.toLowerCase()) ||
+                         trimmed.toLowerCase().includes(f.toLowerCase());
+                });
+                if (relatedFiles.length > 0) {
+                  workaroundToFileMap.set(waId, relatedFiles);
+                  errorToFileMap.set(canonicalId, relatedFiles);
+                  for (const rf of relatedFiles) {
+                    addNode(rf, "file", rf.split("/").pop() || rf, rf);
+                    addEdge(waId, rf, "affects");
+                    addEdge(canonicalId, rf, "affects");
+                  }
+                }
+              } else {
+                // Associate with session files
+                const relatedFiles = [...sessionFiles].filter(f => {
+                  const fileName = f.split("/").pop() || "";
+                  const baseName = fileName.replace(/\.\w+$/, "");
+                  return trimmed.toLowerCase().includes(fileName.toLowerCase()) ||
+                         trimmed.toLowerCase().includes(baseName.toLowerCase()) ||
+                         trimmed.toLowerCase().includes(f.toLowerCase());
+                });
+                if (relatedFiles.length > 0) {
+                  errorToFileMap.set(canonicalId, relatedFiles);
+                  for (const rf of relatedFiles) {
+                    addNode(rf, "file", rf.split("/").pop() || rf, rf);
+                    addEdge(canonicalId, rf, "affects");
+                  }
                 }
               }
             }
           }
         }
 
-        // Link errors to fixes within same session — only if they share file associations or are adjacent
+        // Link errors to fixes/workarounds within same session
         for (const errId of sessionErrors) {
           const errFiles = errorToFileMap.get(errId) || [];
           for (const fixId of sessionFixes) {
@@ -528,6 +574,15 @@ export function extractMemory(
             const shareFiles = errFiles.some(f => fixFiles.includes(f));
             if (shareFiles || errFiles.length === 0 || fixFiles.length === 0) {
               addEdge(errId, fixId, "resolved_by");
+              addAnnotation(errId, "resolution_type", "fix");
+            }
+          }
+          for (const waId of sessionWorkarounds) {
+            const waFiles = workaroundToFileMap.get(waId) || [];
+            const shareFiles = errFiles.some(f => waFiles.includes(f));
+            if (shareFiles || errFiles.length === 0 || waFiles.length === 0) {
+              addEdge(errId, waId, "workaround_by");
+              addAnnotation(errId, "resolution_type", "workaround");
             }
           }
         }
@@ -751,15 +806,18 @@ export function extractMemory(
         for (const issueId of sessionIssues) {
           for (const changeId of sessionChanges) {
             const issueFiles = [...sessionFiles].filter(f => {
-              const edges = edges.filter(e => e.from_id === issueId && e.to_id === f && e.type === "affects");
-              return edges.length > 0;
+              const matchingEdges = edges.filter(e => e.from_id === issueId && e.to_id === f && e.type === "affects");
+              return matchingEdges.length > 0;
             });
             const changeFiles = [...sessionFiles].filter(f => {
-              const edges = edges.filter(e => e.from_id === changeId && e.to_id === f && e.type === "affects");
-              return edges.length > 0;
+              const matchingEdges = edges.filter(e => e.from_id === changeId && e.to_id === f && e.type === "affects");
+              return matchingEdges.length > 0;
             });
-            if (issueFiles.some(f => changeFiles.includes(f))) {
-              addEdge(changeId, issueId, "resolves");
+            const shareFiles = issueFiles.some(f => changeFiles.includes(f));
+            if (shareFiles || issueFiles.length === 0 || changeFiles.length === 0) {
+              const changeTypeAnn = annotations.find(a => a.node_id === changeId && a.key === "change_type");
+              const isWorkaround = changeTypeAnn && (changeTypeAnn.value === "replace" || changeTypeAnn.value === "remove");
+              addEdge(changeId, issueId, isWorkaround ? "workaround_for" : "resolves");
             }
           }
         }
@@ -767,12 +825,12 @@ export function extractMemory(
         for (const decisionId of sessionDecisions) {
           for (const changeId of sessionChanges) {
             const decisionFiles = [...sessionFiles].filter(f => {
-              const edges = edges.filter(e => e.from_id === decisionId && e.to_id === f && e.type === "applies_to");
-              return edges.length > 0;
+              const matchingEdges = edges.filter(e => e.from_id === decisionId && e.to_id === f && e.type === "applies_to");
+              return matchingEdges.length > 0;
             });
             const changeFiles = [...sessionFiles].filter(f => {
-              const edges = edges.filter(e => e.from_id === changeId && e.to_id === f && e.type === "affects");
-              return edges.length > 0;
+              const matchingEdges = edges.filter(e => e.from_id === changeId && e.to_id === f && e.type === "affects");
+              return matchingEdges.length > 0;
             });
             if (decisionFiles.some(f => changeFiles.includes(f))) {
               addEdge(changeId, decisionId, "implements");
