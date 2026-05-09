@@ -326,10 +326,10 @@ export function extractMemory(
       const summaryPath = path.join(sessionsDir2, entry, "summary.md");
       if (!fs.existsSync(summaryPath)) continue;
 
-        const sessionId = entry;
-        const sessionErrors: string[] = [];
-        const sessionFixes: string[] = [];
-        const sessionWorkarounds: string[] = [];
+      const sessionId = entry;
+      const sessionErrors: string[] = [];
+      const sessionFixes: string[] = [];
+      const sessionWorkarounds: string[] = [];
 
       try {
         const content = fs.readFileSync(summaryPath, "utf-8");

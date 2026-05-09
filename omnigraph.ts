@@ -4,6 +4,9 @@ import { GraphDB } from "./db.ts";
 import { scanAndExtract } from "./extract.ts";
 import { buildHtml } from "./web/build.ts";
 import { buildIndex } from "./extractors/semantic.ts";
+import fs from "node:fs";
+import path from "node:path";
+import { execSync } from "node:child_process";
 
 const LIB_DIR = import.meta.dirname;
 
@@ -15,8 +18,58 @@ const htmlPath = `${projectPath}/.omnigraph/index.html`;
 const incremental = args.includes("--incremental") || args.includes("-i");
 
 function ensureDir(path: string) {
-  const fs = require("node:fs");
   if (!fs.existsSync(path)) fs.mkdirSync(path, { recursive: true });
+}
+
+function cleanupDeadNodes(db: GraphDB, projectPath: string) {
+  const deadIds: string[] = [];
+  const allNodes = db.getAllNodes();
+  for (const n of allNodes) {
+    if (n.type === "file" && n.file_path && !n.file_path.startsWith("inputs.")) {
+      const fullPath = path.join(projectPath, n.file_path);
+      if (!fs.existsSync(fullPath)) {
+        deadIds.push(n.id);
+      }
+    }
+  }
+  if (deadIds.length > 0) {
+    const deadList = deadIds.map(id => `'${id.replace(/'/g, "''")}'`).join(",");
+    db.db.exec(`DELETE FROM edges WHERE from_id IN (${deadList}) OR to_id IN (${deadList})`);
+    db.db.exec(`DELETE FROM nodes WHERE id IN (${deadList})`);
+    db.db.exec(`DELETE FROM nodes WHERE id NOT IN (SELECT from_id FROM edges UNION SELECT to_id FROM edges)`);
+    console.log(`Removed ${deadIds.length} dead references: ${deadIds.join(", ")}`);
+  }
+}
+
+async function buildGraph(projectPath: string, dbPath: string, htmlPath: string, incremental: boolean) {
+  ensureDir(`${projectPath}/.omnigraph`);
+  const db = new GraphDB(dbPath);
+
+  if (!incremental) {
+    db.clear();
+  }
+
+  console.log(incremental ? "Incremental scan..." : "Scanning project...");
+  await scanAndExtract(projectPath, db, incremental);
+
+  if (!incremental) {
+    db.db.exec(`
+      DELETE FROM nodes WHERE id NOT IN (
+        SELECT from_id FROM edges UNION SELECT to_id FROM edges
+      ) AND type NOT IN ('lesson', 'lesson_item');
+    `);
+  }
+
+  cleanupDeadNodes(db, projectPath);
+
+  const stats = db.count();
+  console.log(`${stats.nodes} nodes, ${stats.edges} edges extracted`);
+
+  console.log("Generating visualization...");
+  buildHtml(dbPath, htmlPath, projectPath);
+
+  db.close();
+  console.log(`Done: file://${htmlPath}`);
 }
 
 function usage() {
@@ -78,61 +131,11 @@ Examples:
 async function main() {
   switch (command) {
     case "build": {
-      ensureDir(`${projectPath}/.omnigraph`);
-      const db = new GraphDB(dbPath);
-
-      if (!incremental) {
-        db.clear();
-      }
-
-      console.log(incremental ? "Incremental scan..." : "Scanning project...");
-      await scanAndExtract(projectPath, db, incremental);
-
-      const fs = require("node:fs");
-      const path = require("node:path");
-
-      if (!incremental) {
-        db.db.exec(`
-          DELETE FROM nodes WHERE id NOT IN (
-            SELECT from_id FROM edges UNION SELECT to_id FROM edges
-          ) AND type NOT IN ('lesson', 'lesson_item');
-        `);
-      }
-
-      const allNodes = db.getAllNodes();
-      const deadIds: string[] = [];
-      for (const n of allNodes) {
-        if (n.type === "file" && n.file_path && !n.file_path.startsWith("inputs.")) {
-          const fullPath = path.join(projectPath, n.file_path);
-          if (!fs.existsSync(fullPath)) {
-            deadIds.push(n.id);
-          }
-        }
-      }
-      if (deadIds.length > 0) {
-        const deadList = deadIds.map(id => `'${id}'`).join(",");
-        db.db.exec(`DELETE FROM edges WHERE from_id IN (${deadList}) OR to_id IN (${deadList})`);
-        db.db.exec(`DELETE FROM nodes WHERE id IN (${deadList})`);
-        db.db.exec(`DELETE FROM nodes WHERE id NOT IN (SELECT from_id FROM edges UNION SELECT to_id FROM edges)`);
-        console.log(`Removed ${deadIds.length} dead references: ${deadIds.join(", ")}`);
-      }
-
-      const stats = db.count();
-      console.log(`${stats.nodes} nodes, ${stats.edges} edges extracted`);
-
-      console.log("Generating visualization...");
-      buildHtml(dbPath, htmlPath, projectPath);
-
-      db.close();
-      console.log(`Done: file://${htmlPath}`);
+      await buildGraph(projectPath, dbPath, htmlPath, incremental);
       break;
     }
 
     case "save": {
-      const { execSync } = require("node:child_process");
-      const fs = require("node:fs");
-      const path = require("node:path");
-
       const commitMessage = args[1];
       if (!commitMessage) {
         console.log("Usage: omnigraph save <commit-message>");
@@ -254,44 +257,7 @@ Topic: ${topic}
 
       // Step 5: Rebuild graph
       console.log("\n[5/5] Rebuilding graph...");
-      ensureDir(`${projectPath}/.omnigraph`);
-      const db = new GraphDB(dbPath);
-      db.clear();
-
-      console.log("  Scanning project...");
-      await scanAndExtract(projectPath, db, false);
-
-      db.db.exec(`
-        DELETE FROM nodes WHERE id NOT IN (
-          SELECT from_id FROM edges UNION SELECT to_id FROM edges
-        ) AND type NOT IN ('lesson', 'lesson_item');
-      `);
-
-      const deadIds: string[] = [];
-      const allNodes = db.getAllNodes();
-      for (const n of allNodes) {
-        if (n.type === "file" && n.file_path && !n.file_path.startsWith("inputs.")) {
-          const fullPath = path.join(projectPath, n.file_path);
-          if (!fs.existsSync(fullPath)) {
-            deadIds.push(n.id);
-          }
-        }
-      }
-      if (deadIds.length > 0) {
-        const deadList = deadIds.map(id => `'${id}'`).join(",");
-        db.db.exec(`DELETE FROM edges WHERE from_id IN (${deadList}) OR to_id IN (${deadList})`);
-        db.db.exec(`DELETE FROM nodes WHERE id IN (${deadList})`);
-        db.db.exec(`DELETE FROM nodes WHERE id NOT IN (SELECT from_id FROM edges UNION SELECT to_id FROM edges)`);
-        console.log(`  Removed ${deadIds.length} dead references`);
-      }
-
-      const stats = db.count();
-      console.log(`  ${stats.nodes} nodes, ${stats.edges} edges extracted`);
-
-      console.log("  Generating visualization...");
-      buildHtml(dbPath, htmlPath, projectPath);
-
-      db.close();
+      await buildGraph(projectPath, dbPath, htmlPath, false);
 
       console.log("\n✅ Save complete!");
       console.log(`   Graph: file://${htmlPath}`);
@@ -300,7 +266,6 @@ Topic: ${topic}
     }
 
     case "query": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
@@ -349,7 +314,6 @@ Topic: ${topic}
     }
 
     case "search": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
@@ -390,7 +354,6 @@ Topic: ${topic}
     }
 
     case "check": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
@@ -585,8 +548,7 @@ Topic: ${topic}
     }
 
     case "orphans": {
-      const fsOrphans = require("node:fs");
-      if (!fsOrphans.existsSync(dbPath)) {
+      if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
       }
@@ -610,11 +572,10 @@ Topic: ${topic}
         n.type === "file" && !fromIds.has(n.id) && !toIds.has(n.id)
       );
 
-      const path = require("node:path");
       const deadRefs = allNodes.filter((n: any) => {
         if (n.type !== "file" || !n.file_path) return false;
         const fullPath = path.join(projectPath, n.file_path);
-        return !fsOrphans.existsSync(fullPath);
+        return !fs.existsSync(fullPath);
       });
 
       console.log("\n## Orphan Analysis\n");
@@ -647,8 +608,7 @@ Topic: ${topic}
     }
 
     case "impact": {
-      const fsImpact = require("node:fs");
-      if (!fsImpact.existsSync(dbPath)) {
+      if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
       }
@@ -733,8 +693,7 @@ Topic: ${topic}
     }
 
     case "path": {
-      const fsPath = require("node:fs");
-      if (!fsPath.existsSync(dbPath)) {
+      if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
       }
@@ -796,7 +755,6 @@ Topic: ${topic}
     }
 
     case "git-log": {
-      const { execSync } = require("node:child_process");
       const count = parseInt(args[1] || "10", 10);
       console.log(`\n## Recent ${count} commits (files modified)\n`);
       try {
@@ -835,8 +793,7 @@ Topic: ${topic}
     }
 
     case "lessons": {
-      const fsLessons = require("node:fs");
-      if (!fsLessons.existsSync(dbPath)) {
+      if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
       }
@@ -887,7 +844,6 @@ Topic: ${topic}
     }
 
     case "hotspots": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
@@ -991,7 +947,6 @@ Topic: ${topic}
     }
 
     case "errors": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
@@ -1070,7 +1025,6 @@ Topic: ${topic}
     }
 
     case "issues": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
@@ -1149,7 +1103,6 @@ Topic: ${topic}
     }
 
     case "decisions": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
@@ -1219,7 +1172,6 @@ Topic: ${topic}
     }
 
     case "changes": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
@@ -1327,7 +1279,6 @@ Topic: ${topic}
     }
 
     case "timeline": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
@@ -1406,7 +1357,6 @@ Topic: ${topic}
     }
 
     case "semantic": {
-      const fs = require("node:fs");
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);

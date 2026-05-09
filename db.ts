@@ -2,6 +2,41 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+export interface Node {
+  id: string;
+  type: string;
+  label: string;
+  file_path?: string;
+  line_number?: number;
+  content_hash?: string;
+  created_at?: string;
+}
+
+export interface Edge {
+  id?: number;
+  from_id: string;
+  to_id: string;
+  type: string;
+  confidence?: string;
+  valid_from?: string;
+  valid_until?: string;
+}
+
+export interface Annotation {
+  node_id: string;
+  key: string;
+  value: string;
+}
+
+export interface Concept {
+  node_id: string;
+  kind: string;
+  name: string;
+  file_path?: string;
+  line_number?: number;
+  snippet?: string;
+}
+
 export class GraphDB {
   db: Database;
 
