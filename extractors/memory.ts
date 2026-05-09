@@ -45,6 +45,22 @@ const ERROR_CONTEXT_REJECT = /\b(plan|design|identify|extract|implement|add|feat
 // Fix: explicit fix/resolve statements
 const FIX_PATTERN = /\b(Fixed|Resolved|Patched|Workaround|Mitigated|Solved|Fix)\b/i;
 
+const ISSUE_PATTERNS = [
+  /\b(has a bug|crashes|broken|incompatible|doesn.t work|fails to|regression|error when|issue with|problem with)\b/i,
+];
+
+const DECISION_PATTERNS = [
+  /\b(chose|selected|picked|went with|decided on|opted for|using|switched to)\b/i,
+  /\b(over|instead of|rather than|replacing)\b/i,
+];
+
+const CHANGE_PATTERNS = [
+  /\b(replaced|switched|swapped|changed)\b\s+(\w+)\s+(?:with|to|for)\s+(\w+)/i,
+  /\b(added|created|introduced|new)\b\s+(.+)/i,
+  /\b(removed|deleted|dropped|eliminated|uninstalled)\b\s+(.+)/i,
+  /\b(refactored|rewrote|restructured|renamed)\b\s+(.+)/i,
+];
+
 const INPUT_PATTERN = /inputs\.(\w[\w-]*)/g;
 const LESSON_PATTERN = /lessons\/([\w-]+)\.md/g;
 const SKILL_PATTERN = /skills\/([\w-]+)/g;
@@ -582,6 +598,192 @@ export function extractMemory(
       const skillPath = path.join(skillsDir, entry, "SKILL.md");
       if (!fs.existsSync(skillPath)) continue;
       addNode(entry, "skill", entry, `memory/skills/${entry}/SKILL.md`);
+    }
+  }
+
+  const sessionIssueMap = new Map<string, string[]>();
+  const sessionDecisionMap = new Map<string, string[]>();
+  const sessionChangeMap = new Map<string, string[]>();
+
+  const sessionsDir3 = path.join(projectPath, config.sessions_dir);
+  if (fs.existsSync(sessionsDir3)) {
+    for (const entry of fs.readdirSync(sessionsDir3)) {
+      const summaryPath = path.join(sessionsDir3, entry, "summary.md");
+      if (!fs.existsSync(summaryPath)) continue;
+
+      const sessionId = entry;
+      const dateFromId = entry.split("_")[0];
+
+      try {
+        const content = fs.readFileSync(summaryPath, "utf-8");
+        const lines = content.split("\n");
+
+        const sessionFiles = new Set<string>();
+        let inFilesSection = false;
+        for (const line of lines) {
+          if (/^## Files Modified$/i.test(line)) {
+            inFilesSection = true;
+            continue;
+          }
+          if (/^## /i.test(line) && inFilesSection) {
+            inFilesSection = false;
+          }
+          if (inFilesSection) {
+            const pathMatch = line.match(/(?:`([^`]+)`|([\w/.-]+\.\w+))/);
+            if (pathMatch) {
+              const p = (pathMatch[1] || pathMatch[2]).trim();
+              if (p && (p.includes("/") || p.endsWith(".ts") || p.endsWith(".nix") || p.endsWith(".py") || p.endsWith(".rs") || p.endsWith(".go") || p.endsWith(".js") || p.endsWith(".md"))) {
+                sessionFiles.add(p);
+              }
+            }
+          }
+        }
+
+        const pathPattern = /(?:modules\/[\w-]+\.\w+|extractors\/[\w-]+\.\w+|web\/[\w-]+\.\w+|memory\/[\w/.-]+\.\w+|\.?[\w-]+\.ts|\.?[\w-]+\.nix|\.?[\w-]+\.py)/g;
+        for (const m of content.matchAll(pathPattern)) {
+          sessionFiles.add(m[0]);
+        }
+
+        const sessionIssues: string[] = [];
+        const sessionDecisions: string[] = [];
+        const sessionChanges: string[] = [];
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (line.startsWith("#") || line.startsWith("|") || line.startsWith("- `") || line.trim().length < 20) continue;
+
+          for (const pattern of ISSUE_PATTERNS) {
+            pattern.lastIndex = 0;
+            if (pattern.test(line)) {
+              const slug = line.trim().slice(0, 60).replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+              const issueId = `issue:${sessionId}:${slug}`;
+              const label = line.trim().slice(0, 120);
+              addNode(issueId, "issue", label, `memory/sessions/${entry}/summary.md`, 0, dateFromId);
+              addEdge(sessionId, issueId, "detected_issue");
+              sessionIssues.push(issueId);
+
+              const relatedFiles = [...sessionFiles].filter(f => {
+                const fileName = f.split("/").pop() || "";
+                const baseName = fileName.replace(/\.\w+$/, "");
+                return line.toLowerCase().includes(fileName.toLowerCase()) ||
+                       line.toLowerCase().includes(baseName.toLowerCase());
+              });
+              for (const rf of relatedFiles) {
+                addNode(rf, "file", rf.split("/").pop() || rf, rf);
+                addEdge(issueId, rf, "affects");
+              }
+              break;
+            }
+          }
+
+          for (const pattern of DECISION_PATTERNS) {
+            pattern.lastIndex = 0;
+            if (pattern.test(line)) {
+              const slug = line.trim().slice(0, 60).replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+              const decisionId = `decision:${sessionId}:${slug}`;
+              const label = line.trim().slice(0, 120);
+              addNode(decisionId, "decision", label, `memory/sessions/${entry}/summary.md`, 0, dateFromId);
+              addEdge(sessionId, decisionId, "made_decision");
+              sessionDecisions.push(decisionId);
+
+              const rationaleMatch = line.match(/\b(because|since|due to|reason|why)\b\s+(.+)/i);
+              if (rationaleMatch) {
+                addAnnotation(decisionId, "rationale", rationaleMatch[2].trim().slice(0, 200));
+              }
+
+              const alternativesMatch = line.match(/\b(over|instead of|rather than)\b\s+(.+)/i);
+              if (alternativesMatch) {
+                addAnnotation(decisionId, "alternatives", alternativesMatch[2].trim().slice(0, 200));
+              }
+
+              const relatedFiles = [...sessionFiles].filter(f => {
+                const fileName = f.split("/").pop() || "";
+                const baseName = fileName.replace(/\.\w+$/, "");
+                return line.toLowerCase().includes(fileName.toLowerCase()) ||
+                       line.toLowerCase().includes(baseName.toLowerCase());
+              });
+              for (const rf of relatedFiles) {
+                addNode(rf, "file", rf.split("/").pop() || rf, rf);
+                addEdge(decisionId, rf, "applies_to");
+              }
+              break;
+            }
+          }
+
+          for (const pattern of CHANGE_PATTERNS) {
+            pattern.lastIndex = 0;
+            const changeMatch = line.match(pattern);
+            if (changeMatch) {
+              const slug = line.trim().slice(0, 60).replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+              const changeId = `change:${sessionId}:${slug}`;
+              const label = line.trim().slice(0, 120);
+              addNode(changeId, "change", label, `memory/sessions/${entry}/summary.md`, 0, dateFromId);
+              addEdge(sessionId, changeId, "recorded_change");
+              sessionChanges.push(changeId);
+
+              if (changeMatch[0].toLowerCase().includes("replace") || changeMatch[0].toLowerCase().includes("switch")) {
+                addAnnotation(changeId, "change_type", "replace");
+                if (changeMatch[2]) addAnnotation(changeId, "old_value", changeMatch[2].trim());
+                if (changeMatch[3]) addAnnotation(changeId, "new_value", changeMatch[3].trim());
+              } else if (changeMatch[0].toLowerCase().includes("add") || changeMatch[0].toLowerCase().includes("create") || changeMatch[0].toLowerCase().includes("new")) {
+                addAnnotation(changeId, "change_type", "add");
+              } else if (changeMatch[0].toLowerCase().includes("remove") || changeMatch[0].toLowerCase().includes("delete") || changeMatch[0].toLowerCase().includes("drop")) {
+                addAnnotation(changeId, "change_type", "remove");
+              } else if (changeMatch[0].toLowerCase().includes("refactor") || changeMatch[0].toLowerCase().includes("rewrite")) {
+                addAnnotation(changeId, "change_type", "refactor");
+              }
+
+              const relatedFiles = [...sessionFiles].filter(f => {
+                const fileName = f.split("/").pop() || "";
+                const baseName = fileName.replace(/\.\w+$/, "");
+                return line.toLowerCase().includes(fileName.toLowerCase()) ||
+                       line.toLowerCase().includes(baseName.toLowerCase());
+              });
+              for (const rf of relatedFiles) {
+                addNode(rf, "file", rf.split("/").pop() || rf, rf);
+                addEdge(changeId, rf, "affects");
+              }
+              break;
+            }
+          }
+        }
+
+        for (const issueId of sessionIssues) {
+          for (const changeId of sessionChanges) {
+            const issueFiles = [...sessionFiles].filter(f => {
+              const edges = edges.filter(e => e.from_id === issueId && e.to_id === f && e.type === "affects");
+              return edges.length > 0;
+            });
+            const changeFiles = [...sessionFiles].filter(f => {
+              const edges = edges.filter(e => e.from_id === changeId && e.to_id === f && e.type === "affects");
+              return edges.length > 0;
+            });
+            if (issueFiles.some(f => changeFiles.includes(f))) {
+              addEdge(changeId, issueId, "resolves");
+            }
+          }
+        }
+
+        for (const decisionId of sessionDecisions) {
+          for (const changeId of sessionChanges) {
+            const decisionFiles = [...sessionFiles].filter(f => {
+              const edges = edges.filter(e => e.from_id === decisionId && e.to_id === f && e.type === "applies_to");
+              return edges.length > 0;
+            });
+            const changeFiles = [...sessionFiles].filter(f => {
+              const edges = edges.filter(e => e.from_id === changeId && e.to_id === f && e.type === "affects");
+              return edges.length > 0;
+            });
+            if (decisionFiles.some(f => changeFiles.includes(f))) {
+              addEdge(changeId, decisionId, "implements");
+            }
+          }
+        }
+
+        sessionIssueMap.set(sessionId, sessionIssues);
+        sessionDecisionMap.set(sessionId, sessionDecisions);
+        sessionChangeMap.set(sessionId, sessionChanges);
+      } catch {}
     }
   }
 

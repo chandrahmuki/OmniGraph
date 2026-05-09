@@ -31,6 +31,8 @@ export class GraphDB {
         to_id TEXT NOT NULL,
         type TEXT NOT NULL,
         confidence TEXT DEFAULT 'auto',
+        valid_from TEXT,
+        valid_until TEXT,
         UNIQUE(from_id, to_id, type)
       );
       CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
@@ -60,6 +62,12 @@ export class GraphDB {
 
     try {
       this.db.exec("ALTER TABLE nodes ADD COLUMN created_at TEXT");
+    } catch {}
+    try {
+      this.db.exec("ALTER TABLE edges ADD COLUMN valid_from TEXT");
+    } catch {}
+    try {
+      this.db.exec("ALTER TABLE edges ADD COLUMN valid_until TEXT");
     } catch {}
   }
 
@@ -170,6 +178,34 @@ export class GraphDB {
 
   clear() {
     this.db.exec("DELETE FROM nodes; DELETE FROM edges; DELETE FROM annotations; DELETE FROM concepts;");
+  }
+
+  updateEdgeValidUntil(edgeId: number, validUntil: string) {
+    this.db.prepare("UPDATE edges SET valid_until = ? WHERE id = ?").run(validUntil, edgeId);
+  }
+
+  getEdgesForNode(nodeId: string, onlyValid = true): any[] {
+    if (onlyValid) {
+      return this.db.query(`
+        SELECT * FROM edges
+        WHERE (from_id = ? OR to_id = ?)
+          AND (valid_until IS NULL OR valid_until = '')
+      `).all(nodeId, nodeId);
+    }
+    return this.db.query(`
+      SELECT * FROM edges
+      WHERE from_id = ? OR to_id = ?
+    `).all(nodeId, nodeId);
+  }
+
+  getEdgeHistory(nodeId: string): any[] {
+    return this.db.query(`
+      SELECT e.*,
+        CASE WHEN e.valid_until IS NULL THEN 'active' ELSE 'expired' END as status
+      FROM edges e
+      WHERE e.from_id = ? OR e.to_id = ?
+      ORDER BY e.valid_from, e.id
+    `).all(nodeId, nodeId);
   }
 
   close() {

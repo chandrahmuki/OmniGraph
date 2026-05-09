@@ -1,6 +1,7 @@
 import { GraphDB } from "./db.ts";
 import { extract } from "./extractors/generic.ts";
 import { extractMemory } from "./extractors/memory.ts";
+import { extractGitChanges } from "./extractors/git.ts";
 import { initTreeSitter, extractWithTreeSitter, isTreeSitterReady, buildFunctionRegistry, FunctionRegistry } from "./extractors/tree-sitter.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -219,6 +220,40 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
       for (const ann of memResult.annotations) {
         db.insertAnnotation(ann);
       }
+    }
+  }
+
+  const gitResult = extractGitChanges(projectPath);
+  for (const node of gitResult.nodes) {
+    db.insertNode(node);
+  }
+  for (const edge of gitResult.edges) {
+    db.insertEdge(edge);
+  }
+  if (gitResult.annotations) {
+    for (const ann of gitResult.annotations) {
+      db.insertAnnotation(ann);
+    }
+  }
+
+  const previousEdges = db.getAllEdges().filter((e: any) => e.type !== "indexes" && e.valid_from);
+  const now = new Date().toISOString();
+
+  const allCurrentEdges = db.getAllEdges();
+  const currentEdgeKeys = new Set(
+    allCurrentEdges.map((e: any) => `${e.from_id}|${e.to_id}|${e.type}`)
+  );
+
+  for (const prev of previousEdges) {
+    const key = `${prev.from_id}|${prev.to_id}|${prev.type}`;
+    if (!currentEdgeKeys.has(key) && !prev.valid_until) {
+      db.updateEdgeValidUntil(prev.id, now);
+    }
+  }
+
+  for (const edge of allCurrentEdges) {
+    if (!edge.valid_from) {
+      db.db.prepare("UPDATE edges SET valid_from = ? WHERE id = ?").run(now, edge.id);
     }
   }
 }

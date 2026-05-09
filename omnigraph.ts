@@ -3,6 +3,7 @@
 import { GraphDB } from "./db.ts";
 import { scanAndExtract } from "./extract.ts";
 import { buildHtml } from "./web/build.ts";
+import { buildIndex } from "./extractors/semantic.ts";
 
 const LIB_DIR = import.meta.dirname;
 
@@ -23,19 +24,33 @@ function usage() {
 Usage: omnigraph <command>
 
 Commands:
-  build    Scan project, build DB and generate HTML
-  query    Search the DB (nodes, annotations, lesson items)
-  search   Search concepts (functions, classes, structs, types)
-  check    Pre-edit check for a file (dependencies, sessions, lessons)
-  impact   Show full blast radius of changing a file (transitive reverse deps)
-  path     Find shortest dependency path between two nodes
-  git-log  Show recent git commits with files modified
-  orphans  Detect unused inputs, dead refs, isolated nodes
-  lessons  List lesson items (recent, for module, or all)
-  hotspots Show most-modified files and recurring error patterns
-  errors   List errors in graph with their fix status
-           --file=<path>  Show only errors affecting a specific file
-           --unresolved   Show only unresolved errors
+  build      Scan project, build DB and generate HTML
+  query      Search the DB (nodes, annotations, lesson items)
+  search     Search concepts (functions, classes, structs, types)
+  check      Pre-edit check for a file (dependencies, sessions, lessons)
+  impact     Show full blast radius of changing a file (transitive reverse deps)
+  path       Find shortest dependency path between two nodes
+  git-log    Show recent git commits with files modified
+  orphans    Detect unused inputs, dead refs, isolated nodes
+  lessons    List lesson items (recent, for module, or all)
+  hotspots   Show most-modified files and recurring error patterns
+  errors     List errors in graph with their fix status
+              --file=<path>  Show only errors affecting a specific file
+              --unresolved   Show only unresolved errors
+  issues     List issues detected in sessions
+              --file=<path>  Show only issues affecting a specific file
+              --unresolved   Show only unresolved issues
+  decisions  List decisions made in sessions
+              --file=<path>  Show only decisions affecting a specific file
+  changes    List changes recorded in sessions and git
+              --file=<path>  Show only changes affecting a specific file
+              --type=<type>  Filter by change type (replace, add, remove, refactor)
+  timeline   Show timeline of events for a file
+               <file-path>    Required: file to show timeline for
+  semantic   Semantic search across all embedded nodes
+               <query>        Required: search query
+               --type=<type>  Filter by node type
+               --top=<n>      Number of results (default: 10)
 
 Examples:
   omnigraph build
@@ -51,6 +66,10 @@ Examples:
   omnigraph lessons
   omnigraph lessons --recent
   omnigraph lessons --module modules/dbus.nix
+  omnigraph issues --unresolved
+  omnigraph decisions --file=modules/niri.nix
+  omnigraph changes --type=replace
+  omnigraph timeline modules/niri.nix
 `);
 }
 
@@ -255,7 +274,31 @@ async function main() {
         .map(e => nodeMap.get(e.from_id))
         .filter((n: any) => n && n.type === "lesson_item");
 
-      const risk = (usedBy.length > 3 || errorNodes.length > 0) ? "HIGH" : usedBy.length > 0 ? "MEDIUM" : "LOW";
+      const issuesAffecting = allEdges
+        .filter(e => e.to_id === target && e.type === "affects")
+        .map(e => e.from_id)
+        .filter(nodeId => {
+          const node = nodeMap.get(nodeId);
+          return node && node.type === "issue";
+        });
+
+      const decisionsAffecting = allEdges
+        .filter(e => e.to_id === target && e.type === "applies_to")
+        .map(e => e.from_id)
+        .filter(nodeId => {
+          const node = nodeMap.get(nodeId);
+          return node && node.type === "decision";
+        });
+
+      const changesAffecting = allEdges
+        .filter(e => e.to_id === target && e.type === "affects")
+        .map(e => e.from_id)
+        .filter(nodeId => {
+          const node = nodeMap.get(nodeId);
+          return node && node.type === "change";
+        });
+
+      const risk = (usedBy.length > 3 || errorNodes.length > 0 || issuesAffecting.length > 0) ? "HIGH" : usedBy.length > 0 ? "MEDIUM" : "LOW";
 
       console.log(`\n## ${target}`);
       if (imports.length) console.log(`↓ imports: ${imports.join(", ")}`);
@@ -304,6 +347,50 @@ async function main() {
           const date = li.created_at ? ` (${li.created_at})` : "";
           const tagStr = tags.length ? ` [${tags.join(", ")}]` : "";
           console.log(`  - ${li.label}${date}${tagStr}`);
+        }
+      }
+      if (issuesAffecting.length) {
+        console.log(`📋 ISSUES (${issuesAffecting.length}):`);
+        for (const issueId of issuesAffecting) {
+          const issueNode = nodeMap.get(issueId);
+          if (issueNode) {
+            const resolvedBy = allEdges.filter(e => e.from_id === issueId && e.type === "resolved_by");
+            const resolvedLabels = resolvedBy.map(e => {
+              const node = nodeMap.get(e.to_id);
+              return node ? node.label.slice(0, 80) : e.to_id;
+            });
+            console.log(`  ⚠️  ${issueNode.label.slice(0, 100)}`);
+            if (resolvedLabels.length) console.log(`    ✅ Resolved by: ${resolvedLabels.join("; ")}`);
+          }
+        }
+      }
+      if (decisionsAffecting.length) {
+        console.log(`💡 DECISIONS (${decisionsAffecting.length}):`);
+        for (const decisionId of decisionsAffecting) {
+          const decisionNode = nodeMap.get(decisionId);
+          if (decisionNode) {
+            const anns = annotationsByNode.get(decisionId) || [];
+            const rationale = anns.find(a => a.key === "rationale");
+            console.log(`  💡 ${decisionNode.label.slice(0, 100)}`);
+            if (rationale) console.log(`    📝 ${rationale.value}`);
+          }
+        }
+      }
+      if (changesAffecting.length) {
+        console.log(`📜 CHANGES (${changesAffecting.length}):`);
+        for (const changeId of changesAffecting) {
+          const changeNode = nodeMap.get(changeId);
+          if (changeNode) {
+            const anns = annotationsByNode.get(changeId) || [];
+            const changeType = anns.find(a => a.key === "change_type");
+            const oldValue = anns.find(a => a.key === "old_value");
+            const newValue = anns.find(a => a.key === "new_value");
+            let changeDesc = changeNode.label.slice(0, 100);
+            if (oldValue && newValue) {
+              changeDesc = `${changeType?.value || "change"}: ${oldValue.value} → ${newValue.value}`;
+            }
+            console.log(`  📝 ${changeDesc}`);
+          }
         }
       }
       if (provides.length) console.log(`⚙️ provides: ${provides.join(", ")}`);
@@ -794,6 +881,389 @@ async function main() {
           const affectedFiles = affectsEdges.map(e => e.to_id);
           console.log(`  📂 Affects: ${affectedFiles.join(", ")}`);
         }
+        console.log("");
+      }
+
+      db.close();
+      break;
+    }
+
+    case "issues": {
+      const fs = require("node:fs");
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+      const db = new GraphDB(dbPath);
+      const allEdges = db.getAllEdges();
+      const allNodes = db.getAllNodes();
+      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+
+      const fileFilter = args.find(a => a.startsWith("--file="))?.replace("--file=", "");
+      const unresolvedOnly = args.includes("--unresolved") || args.includes("-u");
+
+      let issues = db.db.prepare(`
+        SELECT n.id, n.label, n.file_path, n.created_at,
+               (SELECT GROUP_CONCAT(s.id)
+                FROM edges e
+                JOIN nodes s ON e.from_id = s.id
+                WHERE e.to_id = n.id AND e.type = 'detected_issue') as sessions,
+               (SELECT GROUP_CONCAT(c.label)
+                FROM edges e
+                JOIN nodes c ON e.to_id = n.id
+                WHERE e.from_id = c.id AND e.type = 'resolves') as resolved_by
+        FROM nodes n
+        WHERE n.type = 'issue'
+        ORDER BY n.created_at
+      `).all() as any[];
+
+      if (fileFilter) {
+        const affectedIssueIds = allEdges
+          .filter(e => e.to_id === fileFilter && e.type === "affects")
+          .map(e => e.from_id);
+        issues = issues.filter(i => affectedIssueIds.includes(i.id));
+        console.log(`\n## Issues affecting ${fileFilter} (${issues.length})\n`);
+      } else {
+        console.log(`\n## Issues (${issues.length})\n`);
+      }
+
+      if (!issues.length) {
+        console.log("No issues found.");
+        db.close();
+        break;
+      }
+
+      for (const issue of issues) {
+        if (unresolvedOnly && issue.resolved_by) continue;
+
+        console.log(`### ${issue.label}`);
+        console.log(`  📅 Detected: ${issue.created_at || "unknown"}`);
+        if (issue.sessions) {
+          console.log(`  📝 From session: ${issue.sessions}`);
+        }
+        if (issue.resolved_by) {
+          console.log(`  ✅ Resolved by: ${issue.resolved_by}`);
+        } else {
+          console.log(`  ⚠️  UNRESOLVED`);
+        }
+
+        const affectsEdges = allEdges.filter(e => e.from_id === issue.id && e.type === "affects");
+        if (affectsEdges.length) {
+          const affectedFiles = affectsEdges.map(e => e.to_id);
+          console.log(`  📂 Affects: ${affectedFiles.join(", ")}`);
+        }
+        console.log("");
+      }
+
+      db.close();
+      break;
+    }
+
+    case "decisions": {
+      const fs = require("node:fs");
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+      const db = new GraphDB(dbPath);
+      const allEdges = db.getAllEdges();
+      const allNodes = db.getAllNodes();
+      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+      const annotationsByNode = db.getAllAnnotations();
+
+      const fileFilter = args.find(a => a.startsWith("--file="))?.replace("--file=", "");
+
+      let decisions = db.db.prepare(`
+        SELECT n.id, n.label, n.file_path, n.created_at,
+               (SELECT GROUP_CONCAT(s.id)
+                FROM edges e
+                JOIN nodes s ON e.from_id = s.id
+                WHERE e.to_id = n.id AND e.type = 'made_decision') as sessions
+        FROM nodes n
+        WHERE n.type = 'decision'
+        ORDER BY n.created_at
+      `).all() as any[];
+
+      if (fileFilter) {
+        const affectedDecisionIds = allEdges
+          .filter(e => e.to_id === fileFilter && e.type === "applies_to")
+          .map(e => e.from_id);
+        decisions = decisions.filter(d => affectedDecisionIds.includes(d.id));
+        console.log(`\n## Decisions affecting ${fileFilter} (${decisions.length})\n`);
+      } else {
+        console.log(`\n## Decisions (${decisions.length})\n`);
+      }
+
+      if (!decisions.length) {
+        console.log("No decisions found.");
+        db.close();
+        break;
+      }
+
+      for (const decision of decisions) {
+        console.log(`### ${decision.label}`);
+        console.log(`  📅 Date: ${decision.created_at || "unknown"}`);
+        if (decision.sessions) {
+          console.log(`  📝 From session: ${decision.sessions}`);
+        }
+
+        const anns = annotationsByNode.get(decision.id) || [];
+        const rationale = anns.find(a => a.key === "rationale");
+        if (rationale) {
+          console.log(`  📝 Rationale: ${rationale.value}`);
+        }
+        const alternatives = anns.find(a => a.key === "alternatives");
+        if (alternatives) {
+          console.log(`  🔄 Alternatives: ${alternatives.value}`);
+        }
+
+        const appliesEdges = allEdges.filter(e => e.from_id === decision.id && e.type === "applies_to");
+        if (appliesEdges.length) {
+          const appliesTo = appliesEdges.map(e => e.to_id);
+          console.log(`  📂 Applies to: ${appliesTo.join(", ")}`);
+        }
+        console.log("");
+      }
+
+      db.close();
+      break;
+    }
+
+    case "changes": {
+      const fs = require("node:fs");
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+      const db = new GraphDB(dbPath);
+      const allEdges = db.getAllEdges();
+      const allNodes = db.getAllNodes();
+      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+      const annotationsByNode = db.getAllAnnotations();
+
+      const fileFilter = args.find(a => a.startsWith("--file="))?.replace("--file=", "");
+      const typeFilter = args.find(a => a.startsWith("--type="))?.replace("--type=", "");
+
+      let changes = db.db.prepare(`
+        SELECT n.id, n.label, n.file_path, n.created_at,
+               (SELECT GROUP_CONCAT(s.id)
+                FROM edges e
+                JOIN nodes s ON e.from_id = s.id
+                WHERE e.to_id = n.id AND e.type = 'recorded_change') as recorded_in
+        FROM nodes n
+        WHERE n.type = 'change'
+        ORDER BY n.created_at
+      `).all() as any[];
+
+      if (fileFilter) {
+        const affectedChangeIds = allEdges
+          .filter(e => e.to_id === fileFilter && e.type === "affects")
+          .map(e => e.from_id);
+        changes = changes.filter(c => affectedChangeIds.includes(c.id));
+      }
+
+      if (typeFilter) {
+        changes = changes.filter(c => {
+          const anns = annotationsByNode.get(c.id) || [];
+          const changeType = anns.find(a => a.key === "change_type");
+          return changeType && changeType.value === typeFilter;
+        });
+      }
+
+      if (fileFilter && typeFilter) {
+        console.log(`\n## Changes affecting ${fileFilter} (type: ${typeFilter}) (${changes.length})\n`);
+      } else if (fileFilter) {
+        console.log(`\n## Changes affecting ${fileFilter} (${changes.length})\n`);
+      } else if (typeFilter) {
+        console.log(`\n## Changes (type: ${typeFilter}) (${changes.length})\n`);
+      } else {
+        console.log(`\n## Changes (${changes.length})\n`);
+      }
+
+      if (!changes.length) {
+        console.log("No changes found.");
+        db.close();
+        break;
+      }
+
+      for (const change of changes) {
+        const anns = annotationsByNode.get(change.id) || [];
+        const changeType = anns.find(a => a.key === "change_type");
+
+        console.log(`### ${change.label}`);
+        console.log(`  📅 Date: ${change.created_at || "unknown"}`);
+        if (changeType) {
+          console.log(`  🏷️ Type: ${changeType.value}`);
+        }
+
+        const oldValue = anns.find(a => a.key === "old_value");
+        const newValue = anns.find(a => a.key === "new_value");
+        if (oldValue && newValue) {
+          console.log(`  🔄 ${oldValue.value} → ${newValue.value}`);
+        }
+
+        const reason = anns.find(a => a.key === "reason");
+        if (reason) {
+          console.log(`  📝 Reason: ${reason.value}`);
+        }
+
+        const affectsEdges = allEdges.filter(e => e.from_id === change.id && e.type === "affects");
+        if (affectsEdges.length) {
+          const affectedFiles = affectsEdges.map(e => e.to_id);
+          console.log(`  📂 Affects: ${affectedFiles.join(", ")}`);
+        }
+
+        const resolvesEdges = allEdges.filter(e => e.from_id === change.id && e.type === "resolves");
+        if (resolvesEdges.length) {
+          const resolvedIssues = resolvesEdges.map(e => {
+            const node = nodeMap.get(e.to_id);
+            return node ? node.label.slice(0, 80) : e.to_id;
+          });
+          console.log(`  ✅ Resolves: ${resolvedIssues.join("; ")}`);
+        }
+
+        const implementsEdges = allEdges.filter(e => e.from_id === change.id && e.type === "implements");
+        if (implementsEdges.length) {
+          const implementedDecisions = implementsEdges.map(e => {
+            const node = nodeMap.get(e.to_id);
+            return node ? node.label.slice(0, 80) : e.to_id;
+          });
+          console.log(`  💡 Implements: ${implementedDecisions.join("; ")}`);
+        }
+        console.log("");
+      }
+
+      db.close();
+      break;
+    }
+
+    case "timeline": {
+      const fs = require("node:fs");
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+      const target = args[1];
+      if (!target) {
+        console.log("Usage: omnigraph timeline <file-path>");
+        process.exit(1);
+      }
+      const db = new GraphDB(dbPath);
+      const allEdges = db.getAllEdges();
+      const allNodes = db.getAllNodes();
+      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+      const annotationsByNode = db.getAllAnnotations();
+
+      const events: { date: string; type: string; label: string; nodeId: string; metadata: string }[] = [];
+
+      const changes = allEdges
+        .filter(e => e.to_id === target && e.type === "affects")
+        .map(e => nodeMap.get(e.from_id))
+        .filter(n => n && n.type === "change");
+
+      for (const change of changes) {
+        const anns = annotationsByNode.get(change.id) || [];
+        const changeType = anns.find(a => a.key === "change_type");
+        const date = change.created_at || "unknown";
+        const metadata = changeType ? `[${changeType.value}]` : "";
+        events.push({ date, type: "CHANGE", label: change.label, nodeId: change.id, metadata });
+      }
+
+      const issues = allEdges
+        .filter(e => e.to_id === target && e.type === "affects")
+        .map(e => nodeMap.get(e.from_id))
+        .filter(n => n && n.type === "issue");
+
+      for (const issue of issues) {
+        const date = issue.created_at || "unknown";
+        events.push({ date, type: "ISSUE", label: issue.label, nodeId: issue.id, metadata: "" });
+      }
+
+      const decisions = allEdges
+        .filter(e => e.to_id === target && e.type === "applies_to")
+        .map(e => nodeMap.get(e.from_id))
+        .filter(n => n && n.type === "decision");
+
+      for (const decision of decisions) {
+        const date = decision.created_at || "unknown";
+        events.push({ date, type: "DECISION", label: decision.label, nodeId: decision.id, metadata: "" });
+      }
+
+      const sessions = allEdges
+        .filter(e => e.to_id === target && e.type === "session_modified")
+        .map(e => nodeMap.get(e.from_id))
+        .filter(n => n && n.type === "session");
+
+      for (const session of sessions) {
+        const date = session.created_at || "unknown";
+        events.push({ date, type: "SESSION", label: session.label, nodeId: session.id, metadata: "" });
+      }
+
+      events.sort((a, b) => a.date.localeCompare(b.date));
+
+      console.log(`\n## Timeline: ${target}\n`);
+      console.log(`Total events: ${events.length}\n`);
+
+      for (const event of events) {
+        const icon = event.type === "CHANGE" ? "📝" : event.type === "ISSUE" ? "⚠️" : event.type === "DECISION" ? "💡" : "📋";
+        console.log(`${event.date ? `[${event.date}]` : "[unknown]"} ${icon} ${event.type}: ${event.label.slice(0, 100)}`);
+        if (event.metadata) {
+          console.log(`    ${event.metadata}`);
+        }
+      }
+
+      db.close();
+      break;
+    }
+
+    case "semantic": {
+      const fs = require("node:fs");
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+
+      const searchArgs = args.slice(1);
+      const query = searchArgs.find(a => !a.startsWith("--"));
+      const typeFilter = searchArgs.find(a => a.startsWith("--type="))?.replace("--type=", "");
+      const topK = parseInt(searchArgs.find(a => a.startsWith("--top="))?.replace("--top=", "") || "10", 10);
+
+      if (!query) {
+        console.log("Usage: omnigraph semantic <query> [--type=function|class|lesson_item|error|...] [--top=10]");
+        process.exit(1);
+      }
+
+      const db = new GraphDB(dbPath);
+      const index = buildIndex(db);
+      const results = index.search(query, topK);
+
+      const allNodes = db.getAllNodes();
+      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+
+      console.log(`\n## Semantic Search: "${query}"\n`);
+      console.log(`Found ${results.length} results:\n`);
+
+      if (results.length === 0) {
+        console.log("No results found.");
+        db.close();
+        break;
+      }
+
+      const filtered = typeFilter
+        ? results.filter(r => {
+            const node = nodeMap.get(r.docId);
+            return node && node.type === typeFilter;
+          })
+        : results;
+
+      for (const r of filtered.slice(0, topK)) {
+        const node = nodeMap.get(r.docId);
+        const scorePct = (r.score * 100).toFixed(1);
+        const bar = "█".repeat(Math.round(r.score * 20)) + "░".repeat(20 - Math.round(r.score * 20));
+        console.log(`[${bar}] ${scorePct}%`);
+        console.log(`  [${node?.type || "?"}] ${node?.label || r.docId}`);
+        console.log(`  id: ${r.docId}`);
+        if (node?.file_path) console.log(`  file: ${node.file_path}`);
         console.log("");
       }
 
