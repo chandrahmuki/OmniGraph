@@ -25,6 +25,7 @@ Usage: omnigraph <command>
 
 Commands:
   build      Scan project, build DB and generate HTML
+  save       Git commit + snapshot + rebuild graph (all-in-one)
   query      Search the DB (nodes, annotations, lesson items)
   search     Search concepts (functions, classes, structs, types)
   check      Pre-edit check for a file (dependencies, sessions, lessons)
@@ -53,6 +54,7 @@ Commands:
                --top=<n>      Number of results (default: 10)
 
 Examples:
+  omnigraph save "feat: workaround detection"
   omnigraph build
   omnigraph build --incremental
   omnigraph query flake
@@ -123,6 +125,177 @@ async function main() {
 
       db.close();
       console.log(`Done: file://${htmlPath}`);
+      break;
+    }
+
+    case "save": {
+      const { execSync } = require("node:child_process");
+      const fs = require("node:fs");
+      const path = require("node:path");
+
+      const commitMessage = args[1];
+      if (!commitMessage) {
+        console.log("Usage: omnigraph save <commit-message>");
+        console.log("\nExample: omnigraph save \"feat: workaround detection\"");
+        process.exit(1);
+      }
+
+      console.log("📦 OmniGraph Save — Git + Snapshot + Build\n");
+
+      // Step 1: Git status check
+      console.log("[1/5] Checking git status...");
+      try {
+        const status = execSync("git status --porcelain", { encoding: "utf-8" }).trim();
+        if (!status) {
+          console.log("  ✓ No changes to commit");
+        } else {
+          console.log("  Modified files:");
+          status.split("\n").slice(0, 10).forEach(line => {
+            const file = line.substring(3);
+            console.log(`    ${line[0]} ${file}`);
+          });
+          if (status.split("\n").length > 10) {
+            console.log(`    ... and ${status.split("\n").length - 10} more`);
+          }
+        }
+      } catch (e) {
+        console.log("  ⚠ Not a git repository");
+      }
+
+      // Step 2: Git add & commit
+      console.log("\n[2/5] Committing changes...");
+      try {
+        execSync(`git add -A`, { stdio: "inherit" });
+        execSync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}"`, { stdio: "inherit" });
+        console.log("  ✓ Committed");
+      } catch (e) {
+        const stderr = (e as any).stderr?.toString() || "";
+        if (stderr.includes("nothing added")) {
+          console.log("  ✓ Nothing to commit");
+        } else {
+          console.log("  ⚠ Commit failed:", stderr.split("\n")[0]);
+        }
+      }
+
+      // Step 3: Git push (optional, skip if no remote)
+      console.log("\n[3/5] Pushing to remote...");
+      try {
+        execSync("git push", { stdio: "pipe", encoding: "utf-8" });
+        console.log("  ✓ Pushed");
+      } catch (e) {
+        const stderr = (e as any).stderr?.toString() || "";
+        if (stderr.includes("fatal: no push destination")) {
+          console.log("  ⚠ No remote configured, skipping push");
+        } else {
+          console.log("  ⚠ Push failed:", stderr.split("\n")[0]);
+        }
+      }
+
+      // Step 4: Create snapshot
+      console.log("\n[4/5] Creating session snapshot...");
+      const topic = commitMessage.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase().slice(0, 50);
+      const dateStr = new Date().toISOString().split("T")[0];
+      const snapshotTopic = `${dateStr}_${topic}`;
+      const sessionsDir = path.join(projectPath, "memory/sessions");
+      const snapshotDir = path.join(sessionsDir, snapshotTopic);
+
+      ensureDir(snapshotDir);
+
+      const summaryPath = path.join(snapshotDir, "summary.md");
+      const now = new Date().toISOString();
+
+      let summaryContent = `---
+Generated: ${now}
+Topic: ${topic}
+---
+
+## What Was Accomplished
+- [${now}] ${commitMessage}
+
+## Files Modified
+`;
+
+      try {
+        const files = execSync("git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --cached --name-only", { encoding: "utf-8" }).trim();
+        if (files) {
+          files.split("\n").forEach(f => {
+            summaryContent += `- [${now}] ${f}\n`;
+          });
+        }
+      } catch {}
+
+      try {
+        const lastCommit = execSync("git log -1 --format='%h %s'", { encoding: "utf-8" }).trim();
+        summaryContent += `\n## Commits This Session\n- \`${lastCommit}\` [${now}]\n`;
+      } catch {}
+
+      summaryContent += "\n(End of file)\n";
+
+      fs.writeFileSync(summaryPath, summaryContent);
+      console.log(`  ✓ Snapshot: ${snapshotDir}`);
+
+      // Update index_sessions.md
+      const indexPath = path.join(projectPath, "memory/index_sessions.md");
+      let indexContent = "";
+      if (fs.existsSync(indexPath)) {
+        indexContent = fs.readFileSync(indexPath, "utf-8");
+      } else {
+        indexContent = "# Session Snapshots\n\n";
+      }
+
+      if (!indexContent.includes(`[${topic}]`)) {
+        if (!indexContent.includes(`## ${dateStr}`)) {
+          indexContent += `\n## ${dateStr}\n\n`;
+        }
+        indexContent += `- [${topic}](sessions/${snapshotTopic}/)\n`;
+        fs.writeFileSync(indexPath, indexContent);
+        console.log("  ✓ Updated index_sessions.md");
+      }
+
+      // Step 5: Rebuild graph
+      console.log("\n[5/5] Rebuilding graph...");
+      ensureDir(`${projectPath}/.omnigraph`);
+      const db = new GraphDB(dbPath);
+      db.clear();
+
+      console.log("  Scanning project...");
+      await scanAndExtract(projectPath, db, false);
+
+      db.db.exec(`
+        DELETE FROM nodes WHERE id NOT IN (
+          SELECT from_id FROM edges UNION SELECT to_id FROM edges
+        ) AND type NOT IN ('lesson', 'lesson_item');
+      `);
+
+      const deadIds: string[] = [];
+      const allNodes = db.getAllNodes();
+      for (const n of allNodes) {
+        if (n.type === "file" && n.file_path && !n.file_path.startsWith("inputs.")) {
+          const fullPath = path.join(projectPath, n.file_path);
+          if (!fs.existsSync(fullPath)) {
+            deadIds.push(n.id);
+          }
+        }
+      }
+      if (deadIds.length > 0) {
+        const deadList = deadIds.map(id => `'${id}'`).join(",");
+        db.db.exec(`DELETE FROM edges WHERE from_id IN (${deadList}) OR to_id IN (${deadList})`);
+        db.db.exec(`DELETE FROM nodes WHERE id IN (${deadList})`);
+        db.db.exec(`DELETE FROM nodes WHERE id NOT IN (SELECT from_id FROM edges UNION SELECT to_id FROM edges)`);
+        console.log(`  Removed ${deadIds.length} dead references`);
+      }
+
+      const stats = db.count();
+      console.log(`  ${stats.nodes} nodes, ${stats.edges} edges extracted`);
+
+      console.log("  Generating visualization...");
+      buildHtml(dbPath, htmlPath, projectPath);
+
+      db.close();
+
+      console.log("\n✅ Save complete!");
+      console.log(`   Graph: file://${htmlPath}`);
+      console.log(`   Session: ${snapshotDir}`);
       break;
     }
 
