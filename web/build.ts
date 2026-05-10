@@ -70,8 +70,29 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
-      max-width: 300px;
+      max-width: 400px;
       justify-content: flex-end;
+    }
+    .filter-section {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: rgba(33, 38, 45, 0.8);
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid #30363d;
+    }
+    .filter-section-title {
+      font-size: 10px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+    }
+    .filter-row {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
     }
     .filter-btn {
       background: #21262d;
@@ -85,6 +106,51 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
     }
     .filter-btn:hover { border-color: #58a6ff; }
     .filter-btn.active { background: #1f6feb; border-color: #1f6feb; }
+    .filter-btn.small {
+      padding: 2px 8px;
+      font-size: 11px;
+      border-radius: 12px;
+    }
+    #focusMode {
+      position: absolute;
+      top: 16px;
+      right: 420px;
+      z-index: 10;
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    #focusMode.active { background: #1f6feb; border-color: #1f6feb; }
+    #legend {
+      position: absolute;
+      bottom: 50px;
+      right: 16px;
+      z-index: 10;
+      background: rgba(33, 38, 45, 0.9);
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px;
+      max-height: 300px;
+      overflow-y: auto;
+      display: none;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      margin: 4px 0;
+    }
+    .legend-color {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 1px solid #30363d;
+    }
     #info {
       position: absolute;
       bottom: 16px;
@@ -140,7 +206,9 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
 </head>
 <body>
   <div id="search"><input type="text" id="searchInput" placeholder="Rechercher..."></div>
+  <button id="focusMode">Focus Mode</button>
   <div id="filters"></div>
+  <div id="legend"></div>
   <div id="info">
     <h3 id="infoTitle"></h3>
     <div id="infoMeta"></div>
@@ -176,6 +244,16 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
     const relationLabels = Object.fromEntries(
       Object.entries(relationTypes).map(([k, v]) => [k, v.label || k])
     );
+
+    // Cluster by folder
+    const clusterMap = new Map();
+    uniqueNodes.forEach(n => {
+      if (n.file_path) {
+        const folder = n.file_path.split('/')[0];
+        if (!clusterMap.has(folder)) clusterMap.set(folder, []);
+        clusterMap.get(folder).push(n.id);
+      }
+    });
 
     // Deduplicate
     const seenNodeIds = new Set();
@@ -275,12 +353,21 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
 
     // Filters
     const activeFilters = new Set(types);
+    const activeClusters = new Set([...clusterMap.keys()]);
+    let focusMode = false;
+    let focusedNodeId = null;
+
     const filterContainer = d3.select('#filters');
 
-    filterContainer.selectAll('.filter-btn')
+    // Type filters
+    const typeSection = filterContainer.append('div').attr('class', 'filter-section');
+    typeSection.append('div').attr('class', 'filter-section-title').text('Node Types');
+    const typeRow = typeSection.append('div').attr('class', 'filter-row');
+
+    typeRow.selectAll('.filter-btn')
       .data(types)
       .join('button')
-      .attr('class', 'filter-btn active')
+      .attr('class', 'filter-btn small active')
       .style('border-color', d => colors[d] || '#30363d')
       .text(d => d)
       .on('click', function(e, d) {
@@ -290,10 +377,61 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
         updateVisibility();
       });
 
+    // Cluster filters
+    if (clusterMap.size > 1) {
+      const clusterSection = filterContainer.append('div').attr('class', 'filter-section');
+      clusterSection.append('div').attr('class', 'filter-section-title').text('Clusters');
+      const clusterRow = clusterSection.append('div').attr('class', 'filter-row');
+
+      clusterRow.selectAll('.filter-btn')
+        .data([...clusterMap.keys()].sort())
+        .join('button')
+        .attr('class', 'filter-btn small active')
+        .text(d => d)
+        .on('click', function(e, d) {
+          if (activeClusters.has(d)) activeClusters.delete(d);
+          else activeClusters.add(d);
+          d3.select(this).classed('active', activeClusters.has(d));
+          updateVisibility();
+        });
+    }
+
+    // Focus mode
+    d3.select('#focusMode').on('click', function() {
+      focusMode = !focusMode;
+      d3.select(this).classed('active', focusMode);
+      if (!focusMode) {
+        focusedNodeId = null;
+        updateVisibility();
+      }
+    });
+
+    // Legend
+    const legend = d3.select('#legend');
+    const legendData = types.map(t => ({ type: t, color: colors[t] || '#8b949e' }));
+    legend.selectAll('.legend-item')
+      .data(legendData)
+      .join('div')
+      .attr('class', 'legend-item')
+      .html(d => '<div class="legend-color" style="background:' + d.color + '"></div>' + d.type);
+    legend.style('display', 'block');
+
     function updateVisibility() {
+      if (focusMode && focusedNodeId) {
+        const connected = validEdges.filter(e => e.source.id === focusedNodeId || e.target.id === focusedNodeId);
+        const neighborIds = new Set(connected.map(e => e.source.id === focusedNodeId ? e.target.id : e.source.id));
+        
+        node.style('opacity', d => d.id === focusedNodeId ? 1 : neighborIds.has(d.id) ? 0.7 : 0.05);
+        label.style('opacity', d => d.id === focusedNodeId ? 1 : neighborIds.has(d.id) ? 0.7 : 0);
+        link.style('opacity', d => d.source.id === focusedNodeId || d.target.id === focusedNodeId ? 0.8 : 0.02);
+        return;
+      }
+
       const visibleNodes = new Set();
       node.style('opacity', d => {
-        const visible = activeFilters.has(d.type);
+        const typeVisible = activeFilters.has(d.type);
+        const clusterVisible = !d.file_path || activeClusters.has(d.file_path.split('/')[0]);
+        const visible = typeVisible && clusterVisible;
         if (visible) visibleNodes.add(d.id);
         return visible ? 1 : 0.1;
       });
@@ -332,6 +470,11 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
     // Click on node - enriched info panel
     node.on('click', (e, d) => {
       e.stopPropagation();
+      
+      if (focusMode) {
+        focusedNodeId = d.id;
+      }
+      
       const connected = validEdges.filter(edge => edge.source.id === d.id || edge.target.id === d.id);
       const neighborIds = new Set(connected.map(e => e.source.id === d.id ? e.target.id : e.source.id));
 
@@ -458,6 +601,9 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
 
     svg.on('click', () => {
       document.getElementById('info').style.display = 'none';
+      if (focusMode) {
+        focusedNodeId = null;
+      }
       updateVisibility();
     });
 

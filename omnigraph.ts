@@ -41,6 +41,16 @@ function cleanupDeadNodes(db: GraphDB, projectPath: string) {
   }
 }
 
+function jsonResponse(data: any, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { 
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
+}
+
 async function buildGraph(projectPath: string, dbPath: string, htmlPath: string, incremental: boolean) {
   ensureDir(`${projectPath}/.omnigraph`);
   const db = new GraphDB(dbPath);
@@ -84,6 +94,29 @@ Commands:
   check      Pre-edit check for a file (dependencies, sessions, lessons)
   impact     Show full blast radius of changing a file (transitive reverse deps)
   path       Find shortest dependency path between two nodes
+  backlinks  Show files that depend on this file (reverse deps)
+               --depth=N      Transitive backlinks up to depth N (default: 1)
+               --json         Output as JSON for IDE integration
+  snapshot   Manage graph snapshots (save/restore graph state)
+               create <name>  Create a new snapshot
+               list           List all snapshots
+               delete <name>  Delete a snapshot
+  diff       Compare two snapshots or current vs last build
+               <snap1> <snap2>  Compare two named snapshots
+               --last           Compare current vs last snapshot
+               --json           Output as JSON
+  export     Export graph to different formats
+               <json|graphml|gexf>  Export format
+               [output-file]  Output file (default: stdout)
+               --filter=<type>  Filter by node type
+  embed      Vector embeddings for semantic search
+               build            Generate embeddings for all nodes
+               query <text>     Semantic search (--top=N, --type=)
+  ask        AI-powered Q&A over your codebase (RAG)
+               <question>       Natural language question
+  serve      Start HTTP API server
+               --port=N         Port number (default: 8080)
+               --read-only      Read-only mode (no write operations)
   git-log    Show recent git commits with files modified
   orphans    Detect unused inputs, dead refs, isolated nodes
   lessons    List lesson items (recent, for module, or all)
@@ -117,6 +150,19 @@ Examples:
   omnigraph check modules/niri.nix
   omnigraph impact modules/niri.nix
   omnigraph path modules/niri.nix modules/terminal.nix
+  omnigraph backlinks modules/niri.nix
+  omnigraph backlinks modules/niri.nix --depth=2
+  omnigraph snapshot create baseline
+  omnigraph snapshot list
+  omnigraph diff baseline current
+  omnigraph diff --last
+  omnigraph export json graph.json
+  omnigraph export graphml graph.graphml
+  omnigraph export gexf graph.gexf
+  omnigraph embed build
+  omnigraph embed query "auth handling"
+  omnigraph ask "Where is auth handled?"
+  omnigraph serve --port=8080
   omnigraph orphans
   omnigraph git-log
   omnigraph lessons
@@ -315,42 +361,101 @@ Topic: ${topic}
       break;
     }
 
-    case "search": {
+    case "embed": {
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
       }
-      const searchArgs = args.slice(1);
-      const term = searchArgs.find(a => !a.startsWith("--"));
-      const kindFilter = searchArgs.find(a => a.startsWith("--kind="))?.replace("--kind=", "");
-      if (!term) {
-        console.log("Usage: omnigraph search <term> [--kind=function|class|struct|interface|type]");
+
+      const subcommand = args[1];
+
+      switch (subcommand) {
+        case "build": {
+          const db = new GraphDB(dbPath);
+          console.log("Building embeddings...");
+          const result = db.embedAndStore();
+          console.log(`✓ Embedded ${result.embedded} nodes (${result.failed} failed)`);
+          db.close();
+          break;
+        }
+
+        case "query": {
+          const queryArgs = args.slice(2).filter(a => !a.startsWith("--"));
+          const query = queryArgs.join(" ");
+          if (!query) {
+            console.log("Usage: omnigraph embed query <search-query>");
+            process.exit(1);
+          }
+          const topArg = args.find(a => a.startsWith("--top="));
+          const top = topArg ? parseInt(topArg.split("=")[1], 10) : 10;
+          const typeArg = args.find(a => a.startsWith("--type="));
+          const typeFilter = typeArg ? typeArg.split("=")[1] : undefined;
+
+          const db = new GraphDB(dbPath);
+          const results = db.semanticSearch(query, top, typeFilter);
+          
+          console.log(`\n## Semantic Search: "${query}"\n`);
+          if (results.length === 0) {
+            console.log("No results found.");
+          } else {
+            for (const r of results) {
+              const score = (r.score * 100).toFixed(1);
+              console.log(`${score.padEnd(6, " ")}% ${r.node?.label || r.node_id} (${r.node?.type || "?"})`);
+            }
+          }
+          db.close();
+          break;
+        }
+
+        default: {
+          console.log("Usage: omnigraph embed <build|query> [options]");
+          console.log("\nCommands:");
+          console.log("  build              Generate embeddings for all nodes");
+          console.log("  query <text>       Semantic search");
+          console.log("\nOptions:");
+          console.log("  --top=N            Number of results (default: 10)");
+          console.log("  --type=<type>      Filter by node type");
+          process.exit(1);
+        }
+      }
+      break;
+    }
+
+    case "ask": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
         process.exit(1);
       }
+
+      const query = args.slice(1).join(" ");
+      if (!query) {
+        console.log("Usage: omnigraph ask <question>");
+        console.log("\nExample: omnigraph ask 'Where is auth handled?'");
+        process.exit(1);
+      }
+
       const db = new GraphDB(dbPath);
-      const results = db.searchConcepts(term, kindFilter);
-
-      console.log(`\n## Search: "${term}"${kindFilter ? ` (kind: ${kindFilter})` : ""}\n`);
-      console.log(`Found ${results.length} concept(s):\n`);
-
-      const grouped: Record<string, any[]> = {};
-      for (const r of results) {
-        if (!grouped[r.kind]) grouped[r.kind] = [];
-        grouped[r.kind].push(r);
-      }
-
-      for (const [kind, items] of Object.entries(grouped)) {
-        console.log(`### ${kind} (${items.length})`);
-        for (const item of items.slice(0, 20)) {
-          const loc = item.file_path ? `${item.file_path}` : "";
-          const line = item.line_number ? `:${item.line_number}` : "";
-          const snippet = item.snippet ? ` — ${item.snippet.slice(0, 80)}` : "";
-          console.log(`  ${item.name} → ${loc}${line}${snippet}`);
+      const results = db.semanticSearch(query, 5);
+      
+      console.log(`\n## Answer: "${query}"\n`);
+      
+      if (results.length === 0) {
+        console.log("No relevant nodes found. Try building embeddings first: omnigraph embed build");
+      } else {
+        console.log("**Relevant context:**\n");
+        for (const r of results) {
+          const score = (r.score * 100).toFixed(1);
+          console.log(`- ${r.node?.label || r.node_id} (${r.node?.type || "?"}) — ${score}% match`);
+          if (r.node?.file_path) {
+            console.log(`  File: ${r.node.file_path}`);
+          }
         }
-        if (items.length > 20) console.log(`  ... and ${items.length - 20} more`);
-        console.log("");
+        console.log("\n**Next steps:**");
+        console.log("- Use 'omnigraph check <file>' to see dependencies");
+        console.log("- Use 'omnigraph backlinks <file>' to see reverse dependencies");
+        console.log("- Use 'omnigraph impact <file>' to see full blast radius");
       }
-
+      
       db.close();
       break;
     }
@@ -369,264 +474,50 @@ Topic: ${topic}
       const allEdges = db.getAllEdges();
       const allNodes = db.getAllNodes();
       const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
-      const annotationsByNode = db.getAllAnnotations();
 
-      const down = allEdges.filter(e => e.from_id === target);
-      const up = allEdges.filter(e => e.to_id === target);
-
-      const imports = down.filter(e => e.type === "imports").map(e => e.to_id);
-      const usesInput = down.filter(e => e.type === "uses_input").map(e => e.to_id);
-      const sharesDep = down.filter(e => e.type === "shares_dep").map(e => {
-        const hubNode = nodeMap.get(e.to_id);
-        return hubNode ? hubNode.label : e.to_id;
-      });
-      const usesColors = down.filter(e => e.type === "uses_colors").map(e => e.to_id);
-      const refsSecrets = down.filter(e => e.type === "references_secrets").map(e => e.to_id);
-      const refsGenerated = down.filter(e => e.type === "references_generated").map(e => e.to_id);
-      const provides = down.filter(e => e.type === "provides_option").map(e => e.to_id);
-      const consumes = down.filter(e => e.type === "consumes_option").map(e => e.to_id);
-      const usedBy = up.filter(e => e.type !== "indexes").map(e => e.from_id);
-      const sessions = up.filter(e => e.type === "session_modified").map(e => e.from_id);
-      const lessons = up.filter(e => e.type === "lesson_applies_to").map(e => e.from_id);
-
-      const errorsAffecting = allEdges
-        .filter(e => e.to_id === target && e.type === "affects")
-        .map(e => e.from_id)
-        .filter(nodeId => {
-          const node = nodeMap.get(nodeId);
-          return node && (node.type === "error" || node.type === "fix");
-        });
-
-      const errorNodes = errorsAffecting.filter(id => {
-        const node = nodeMap.get(id);
-        return node && node.type === "error";
-      });
-
-      const fixNodes = errorsAffecting.filter(id => {
-        const node = nodeMap.get(id);
-        return node && node.type === "fix";
-      });
-
-      const lessonItems = up
-        .filter(e => e.type === "lesson_applies_to")
-        .map(e => nodeMap.get(e.from_id))
-        .filter((n: any) => n && n.type === "lesson_item");
-
-      const issuesAffecting = allEdges
-        .filter(e => e.to_id === target && e.type === "affects")
-        .map(e => e.from_id)
-        .filter(nodeId => {
-          const node = nodeMap.get(nodeId);
-          return node && node.type === "issue";
-        });
-
-      const decisionsAffecting = allEdges
-        .filter(e => e.to_id === target && e.type === "applies_to")
-        .map(e => e.from_id)
-        .filter(nodeId => {
-          const node = nodeMap.get(nodeId);
-          return node && node.type === "decision";
-        });
-
-      const changesAffecting = allEdges
-        .filter(e => e.to_id === target && e.type === "affects")
-        .map(e => e.from_id)
-        .filter(nodeId => {
-          const node = nodeMap.get(nodeId);
-          return node && node.type === "change";
-        });
-
-      const risk = (usedBy.length > 3 || errorNodes.length > 0 || issuesAffecting.length > 0) ? "HIGH" : usedBy.length > 0 ? "MEDIUM" : "LOW";
-
-      console.log(`\n## ${target}`);
-      if (imports.length) console.log(`↓ imports: ${imports.join(", ")}`);
-      if (usesInput.length) console.log(`↓ uses_input: ${usesInput.join(", ")}`);
-      if (sharesDep.length) console.log(`🔗 shares_dep: ${sharesDep.join(", ")}`);
-      if (usesColors.length) console.log(`↓ uses_colors: ${usesColors.join(", ")}`);
-      if (refsSecrets.length) console.log(`↓ refs_secrets: ${refsSecrets.join(", ")}`);
-      if (refsGenerated.length) console.log(`↓ refs_generated: ${refsGenerated.join(", ")}`);
-      if (usedBy.length) console.log(`↑ used_by: ${usedBy.join(", ")}`);
-      else console.log(`↑ used_by: (none)`);
-
-      const functionsInFile = allNodes.filter((n: any) => n.type === "function" && n.file_path === target);
-      const calledByOtherFiles = new Map<string, string[]>();
-      for (const fn of functionsInFile) {
-        const callers = allEdges
-          .filter(e => e.to_id === fn.id && e.type === "calls")
-          .map(e => e.from_id)
-          .filter(fromId => {
-            const fromFile = fromId.split(":")[0];
-            return fromFile !== target;
-          });
-        if (callers.length > 0) {
-          calledByOtherFiles.set(fn.label, callers);
-        }
-      }
-      if (calledByOtherFiles.size > 0) {
-        console.log(`↑ called_by (cross-file):`);
-        for (const [fnName, callers] of calledByOtherFiles) {
-          const callerFiles = [...new Set(callers.map(c => c.split(":")[0]))];
-          console.log(`  ${fnName} ← ${callerFiles.join(", ")}`);
-        }
-      }
-
-      if (sessions.length) console.log(`📝 sessions: ${sessions.slice(-5).join(", ")}`);
-      if (lessons.length) console.log(`📖 lessons: ${lessons.join(", ")}`);
-      if (errorNodes.length) {
-        console.log(`🚨 PAST ERRORS (${errorNodes.length}):`);
-        for (const errId of errorNodes) {
-          const errNode = nodeMap.get(errId);
-          if (errNode) {
-            const fixEdges = allEdges.filter(e => e.from_id === errId && e.type === "resolved_by");
-            const fixLabels = fixEdges.map(e => {
-              const fixNode = nodeMap.get(e.to_id);
-              return fixNode ? fixNode.label.slice(0, 80) : e.to_id;
-            });
-            const sessionEdges = allEdges.filter(e => e.to_id === errId && e.type === "detected_error");
-            const sessionIds = sessionEdges.map(e => e.from_id);
-            console.log(`  ⚠️  ${errNode.label.slice(0, 100)}`);
-            if (fixLabels.length) console.log(`    ✅ Resolved by: ${fixLabels.join("; ")}`);
-            if (sessionIds.length) console.log(`    📅 From session: ${sessionIds.join(", ")}`);
-          }
-        }
-      }
-      if (fixNodes.length && !errorNodes.length) {
-        console.log(`🔧 FIXES APPLIED (${fixNodes.length}):`);
-        for (const fixId of fixNodes) {
-          const fixNode = nodeMap.get(fixId);
-          if (fixNode) {
-            console.log(`  ✅ ${fixNode.label.slice(0, 100)}`);
-          }
-        }
-      }
-      if (lessonItems.length) {
-        console.log(`💡 lesson items:`);
-        for (const li of lessonItems) {
-          const tags = (annotationsByNode.get(li.id) || [])
-            .filter(a => a.key === "tag")
-            .map(a => a.value);
-          const date = li.created_at ? ` (${li.created_at})` : "";
-          const tagStr = tags.length ? ` [${tags.join(", ")}]` : "";
-          console.log(`  - ${li.label}${date}${tagStr}`);
-        }
-      }
-      if (issuesAffecting.length) {
-        console.log(`📋 ISSUES (${issuesAffecting.length}):`);
-        for (const issueId of issuesAffecting) {
-          const issueNode = nodeMap.get(issueId);
-          if (issueNode) {
-            const resolvedBy = allEdges.filter(e => e.from_id === issueId && e.type === "resolved_by");
-            const resolvedLabels = resolvedBy.map(e => {
-              const node = nodeMap.get(e.to_id);
-              return node ? node.label.slice(0, 80) : e.to_id;
-            });
-            console.log(`  ⚠️  ${issueNode.label.slice(0, 100)}`);
-            if (resolvedLabels.length) console.log(`    ✅ Resolved by: ${resolvedLabels.join("; ")}`);
-          }
-        }
-      }
-      if (decisionsAffecting.length) {
-        console.log(`💡 DECISIONS (${decisionsAffecting.length}):`);
-        for (const decisionId of decisionsAffecting) {
-          const decisionNode = nodeMap.get(decisionId);
-          if (decisionNode) {
-            const anns = annotationsByNode.get(decisionId) || [];
-            const rationale = anns.find(a => a.key === "rationale");
-            console.log(`  💡 ${decisionNode.label.slice(0, 100)}`);
-            if (rationale) console.log(`    📝 ${rationale.value}`);
-          }
-        }
-      }
-      if (changesAffecting.length) {
-        console.log(`📜 CHANGES (${changesAffecting.length}):`);
-        for (const changeId of changesAffecting) {
-          const changeNode = nodeMap.get(changeId);
-          if (changeNode) {
-            const anns = annotationsByNode.get(changeId) || [];
-            const changeType = anns.find(a => a.key === "change_type");
-            const oldValue = anns.find(a => a.key === "old_value");
-            const newValue = anns.find(a => a.key === "new_value");
-            let changeDesc = changeNode.label.slice(0, 100);
-            if (oldValue && newValue) {
-              changeDesc = `${changeType?.value || "change"}: ${oldValue.value} → ${newValue.value}`;
-            }
-            console.log(`  📝 ${changeDesc}`);
-          }
-        }
-      }
-      if (provides.length) console.log(`⚙️ provides: ${provides.join(", ")}`);
-      if (consumes.length) console.log(`⚙️ consumes: ${consumes.join(", ")}`);
-
-      const allRelated = [...down, ...up];
-      const confCounts: Record<string, number> = {};
-      for (const e of allRelated) {
-        const c = e.confidence || "unknown";
-        confCounts[c] = (confCounts[c] || 0) + 1;
-      }
-      const confParts = Object.entries(confCounts).map(([k, v]) => `${v} ${k}`);
-      if (confParts.length) console.log(`🏷️ confidence: ${confParts.join(", ")}`);
-
-      console.log(`⚠️ risk: ${risk} (${usedBy.length} reverse deps)`);
-
-      db.close();
-      break;
-    }
-
-    case "orphans": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
+      const node = allNodes.find((n: any) => n.id === target || n.file_path === target);
+      if (!node) {
+        console.log(`Node not found: ${target}`);
+        db.close();
         process.exit(1);
       }
-      const db = new GraphDB(dbPath);
-      const allEdges = db.getAllEdges();
-      const allNodes = db.getAllNodes();
 
-      const nodeIds = new Set(allNodes.map((n: any) => n.id));
-      const fromIds = new Set(allEdges.map((e: any) => e.from_id));
-      const toIds = new Set(allEdges.map((e: any) => e.to_id));
+      console.log(`\n## Pre-edit Check: ${node.id}\n`);
 
-      const inputs = allNodes.filter((n: any) => n.type === "input");
-      const orphanInputs = inputs.filter((n: any) => {
-        const codeRefs = allEdges.filter((e: any) =>
-          e.to_id === n.id && e.type === "uses_input" && !e.from_id.startsWith("2026-")
-        );
-        return codeRefs.length === 0;
-      });
+      const deps = allEdges.filter((e: any) => e.from_id === node.id);
+      const reverseDeps = allEdges.filter((e: any) => e.to_id === node.id && !e.from_id.startsWith("2026-"));
 
-      const isolatedFiles = allNodes.filter((n: any) =>
-        n.type === "file" && !fromIds.has(n.id) && !toIds.has(n.id)
-      );
-
-      const deadRefs = allNodes.filter((n: any) => {
-        if (n.type !== "file" || !n.file_path) return false;
-        const fullPath = path.join(projectPath, n.file_path);
-        return !fs.existsSync(fullPath);
-      });
-
-      console.log("\n## Orphan Analysis\n");
-
-      if (orphanInputs.length) {
-        console.log(`### Unused Inputs (${orphanInputs.length})`);
-        for (const n of orphanInputs) console.log(`  ${n.id} (${n.label})`);
-      } else {
-        console.log("### Unused Inputs: none");
+      if (deps.length > 0) {
+        console.log(`### Uses (${deps.length}):`);
+        for (const e of deps.slice(0, 10)) {
+          const target = nodeMap.get(e.to_id);
+          console.log(`  → ${e.to_id} [${e.type}]${target ? ` (${target.type})` : ""}`);
+        }
+        if (deps.length > 10) console.log(`  ... and ${deps.length - 10} more`);
+        console.log();
       }
 
-      if (isolatedFiles.length) {
-        console.log(`\n### Isolated Files (${isolatedFiles.length})`);
-        for (const n of isolatedFiles.slice(0, 20))
-          console.log(`  ${n.id}`);
-        if (isolatedFiles.length > 20) console.log(`  ... and ${isolatedFiles.length - 20} more`);
-      } else {
-        console.log("\n### Isolated Files: none");
+      if (reverseDeps.length > 0) {
+        console.log(`### Used by (${reverseDeps.length}):`);
+        for (const e of reverseDeps.slice(0, 10)) {
+          const source = nodeMap.get(e.from_id);
+          console.log(`  ← ${e.from_id} [${e.type}]${source ? ` (${source.type})` : ""}`);
+        }
+        if (reverseDeps.length > 10) console.log(`  ... and ${reverseDeps.length - 10} more`);
+        console.log();
       }
 
-      if (deadRefs.length) {
-        console.log(`\n### Dead References (file not on disk) (${deadRefs.length})`);
-        for (const n of deadRefs) console.log(`  ${n.id} -> ${n.file_path}`);
-      } else {
-        console.log("\n### Dead References: none");
+      const sessions = allEdges.filter((e: any) => e.from_id.startsWith("2026-") && e.to_id === node.id);
+      if (sessions.length > 0) {
+        console.log(`### Related sessions (${sessions.length}):`);
+        for (const e of sessions.slice(0, 5)) {
+          console.log(`  - ${e.from_id} [${e.type}]`);
+        }
+        console.log();
       }
+
+      const risk = reverseDeps.length > 10 ? "HIGH" : reverseDeps.length > 3 ? "MEDIUM" : "LOW";
+      console.log(`⚠️  Risk: ${risk} (${reverseDeps.length} reverse deps)`);
 
       db.close();
       break;
@@ -703,16 +594,6 @@ Topic: ${topic}
         }
       }
 
-      const sessions = allEdges.filter((e: any) =>
-        e.from_id.startsWith("2026-") && e.to_id === target
-      );
-      if (sessions.length) {
-        console.log(`\n### Related sessions:`);
-        for (const e of sessions.slice(0, 5)) {
-          console.log(`  ${e.from_id} [${e.type}]`);
-        }
-      }
-
       db.close();
       break;
     }
@@ -776,6 +657,694 @@ Topic: ${topic}
       }
 
       db.close();
+      break;
+    }
+
+    case "backlinks": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+      const target = args[1];
+      if (!target) {
+        console.log("Usage: omnigraph backlinks <file-path> [--depth=N] [--json]");
+        process.exit(1);
+      }
+
+      const depthArg = args.find(a => a.startsWith("--depth="));
+      const depth = depthArg ? parseInt(depthArg.split("=")[1], 10) : 1;
+      const asJson = args.includes("--json");
+
+      const db = new GraphDB(dbPath);
+      const backlinks = db.getBacklinks(target, depth);
+      const allNodes = db.getAllNodes();
+      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+
+      if (asJson) {
+        console.log(JSON.stringify({
+          target,
+          depth,
+          total: backlinks.length,
+          backlinks: backlinks.map(b => ({
+            id: b.id,
+            type: b.type,
+            edge_type: b.edge_type,
+            distance: b.distance,
+            label: nodeMap.get(b.id)?.label || b.id
+          }))
+        }, null, 2));
+      } else {
+        console.log(`\n## Backlinks: ${target}\n`);
+        console.log(`Total: ${backlinks.length} files depend on this\n`);
+
+        const byDistance = new Map<number, typeof backlinks>();
+        for (const b of backlinks) {
+          if (!byDistance.has(b.distance)) byDistance.set(b.distance, []);
+          byDistance.get(b.distance)!.push(b);
+        }
+
+        for (const [dist, links] of byDistance.entries()) {
+          console.log(`### Depth ${dist}:`);
+          for (const link of links) {
+            const node = nodeMap.get(link.id);
+            console.log(`  ${link.id} [${link.edge_type}] (${link.type})${node?.file_path ? ` — ${node.file_path}` : ""}`);
+          }
+          console.log();
+        }
+      }
+
+      db.close();
+      break;
+    }
+
+    case "snapshot": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+
+      const subcommand = args[1];
+      const name = args[2];
+
+      switch (subcommand) {
+        case "create": {
+          if (!name) {
+            console.log("Usage: omnigraph snapshot create <name>");
+            process.exit(1);
+          }
+          const db = new GraphDB(dbPath);
+          const result = db.createSnapshot(name);
+          console.log(`✓ Snapshot created: ${name}`);
+          console.log(`  ID: ${result.id}`);
+          console.log(`  Nodes: ${result.nodes}`);
+          console.log(`  Edges: ${result.edges}`);
+          db.close();
+          break;
+        }
+
+        case "list": {
+          const db = new GraphDB(dbPath);
+          const snapshots = db.listSnapshots();
+          if (snapshots.length === 0) {
+            console.log("No snapshots found.");
+          } else {
+            console.log("\n## Snapshots\n");
+            console.log("| ID | Name | Created | Nodes | Edges |");
+            console.log("|----|------|---------|-------|-------|");
+            for (const s of snapshots) {
+              console.log(`| ${s.id} | ${s.name} | ${s.created_at.split("T")[0]} | ${s.nodes} | ${s.edges} |`);
+            }
+          }
+          db.close();
+          break;
+        }
+
+        case "delete": {
+          if (!name) {
+            console.log("Usage: omnigraph snapshot delete <name>");
+            process.exit(1);
+          }
+          const db = new GraphDB(dbPath);
+          const deleted = db.deleteSnapshot(name);
+          if (deleted) {
+            console.log(`✓ Snapshot deleted: ${name}`);
+          } else {
+            console.error(`Snapshot not found: ${name}`);
+          }
+          db.close();
+          break;
+        }
+
+        default: {
+          console.log("Usage: omnigraph snapshot <create|list|delete> [name]");
+          process.exit(1);
+        }
+      }
+      break;
+    }
+
+    case "diff": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+
+      const snapshot1 = args[1];
+      const snapshot2 = args[2];
+      const asJson = args.includes("--json");
+
+      if (!snapshot1) {
+        console.log("Usage: omnigraph diff <snapshot1> <snapshot2> [--json]");
+        console.log("       omnigraph diff --last (compare current vs last build)");
+        process.exit(1);
+      }
+
+      const db = new GraphDB(dbPath);
+      let diffResult;
+
+      if (snapshot1 === "--last") {
+        const snapshots = db.listSnapshots();
+        if (snapshots.length < 1) {
+          console.error("No snapshots found. Create one with: omnigraph snapshot create <name>");
+          db.close();
+          process.exit(1);
+        }
+        const last = snapshots[0];
+        const currentHash = db.getCurrentGraphHash();
+        
+        const allNodes = db.getAllNodes();
+        const allEdges = db.getAllEdges();
+        const lastSnapshot = db.getSnapshot(last.name);
+        
+        if (!lastSnapshot) {
+          console.error("Failed to load snapshot");
+          db.close();
+          process.exit(1);
+        }
+
+        const nodeSet1 = new Set(lastSnapshot.nodes);
+        const edgeSet1 = new Set(lastSnapshot.edges);
+        const nodeSet2 = new Set(allNodes.map((n: any) => n.id));
+        const edgeSet2 = new Set(allEdges.map((e: any) => e.id));
+
+        const addedNodes = Array.from(nodeSet2).filter(id => !nodeSet1.has(id));
+        const removedNodes = Array.from(nodeSet1).filter(id => !nodeSet2.has(id));
+        const addedEdges = Array.from(edgeSet2).filter(id => !edgeSet1.has(id));
+        const removedEdges = Array.from(edgeSet1).filter(id => !edgeSet2.has(id));
+
+        diffResult = {
+          added_nodes: addedNodes,
+          removed_nodes: removedNodes,
+          added_edges: addedEdges,
+          removed_edges: removedEdges,
+          snapshot1: { name: last.name, created_at: last.created_at, nodes: last.nodes, edges: last.edges },
+          snapshot2: { name: "current", created_at: new Date().toISOString(), nodes: currentHash.nodes, edges: currentHash.edges }
+        };
+      } else {
+        diffResult = db.diffSnapshots(snapshot1, snapshot2);
+        if (!diffResult) {
+          console.error(`Snapshot not found: ${snapshot1} or ${snapshot2}`);
+          db.close();
+          process.exit(1);
+        }
+      }
+
+      if (asJson) {
+        console.log(JSON.stringify(diffResult, null, 2));
+      } else {
+        console.log("\n## Graph Diff\n");
+        console.log(`**From:** ${diffResult.snapshot1.name} (${diffResult.snapshot1.created_at.split("T")[0]}) — ${diffResult.snapshot1.nodes} nodes, ${diffResult.snapshot1.edges} edges`);
+        console.log(`**To:** ${diffResult.snapshot2.name} (${diffResult.snapshot2.created_at.split("T")[0]}) — ${diffResult.snapshot2.nodes} nodes, ${diffResult.snapshot2.edges} edges\n`);
+
+        console.log(`### Summary`);
+        console.log(`- Added nodes: ${diffResult.added_nodes.length}`);
+        console.log(`- Removed nodes: ${diffResult.removed_nodes.length}`);
+        console.log(`- Added edges: ${diffResult.added_edges.length}`);
+        console.log(`- Removed edges: ${diffResult.removed_edges.length}\n`);
+
+        if (diffResult.added_nodes.length > 0) {
+          console.log("### Added nodes:");
+          for (const id of diffResult.added_nodes.slice(0, 20)) {
+            console.log(`  + ${id}`);
+          }
+          if (diffResult.added_nodes.length > 20) {
+            console.log(`  ... and ${diffResult.added_nodes.length - 20} more`);
+          }
+          console.log();
+        }
+
+        if (diffResult.removed_nodes.length > 0) {
+          console.log("### Removed nodes:");
+          for (const id of diffResult.removed_nodes.slice(0, 20)) {
+            console.log(`  - ${id}`);
+          }
+          if (diffResult.removed_nodes.length > 20) {
+            console.log(`  ... and ${diffResult.removed_nodes.length - 20} more`);
+          }
+          console.log();
+        }
+
+        if (diffResult.added_edges.length > 0) {
+          console.log("### Added edges:");
+          for (const id of diffResult.added_edges.slice(0, 20)) {
+            console.log(`  + Edge #${id}`);
+          }
+          if (diffResult.added_edges.length > 20) {
+            console.log(`  ... and ${diffResult.added_edges.length - 20} more`);
+          }
+          console.log();
+        }
+
+        if (diffResult.removed_edges.length > 0) {
+          console.log("### Removed edges:");
+          for (const id of diffResult.removed_edges.slice(0, 20)) {
+            console.log(`  - Edge #${id}`);
+          }
+          if (diffResult.removed_edges.length > 20) {
+            console.log(`  ... and ${diffResult.removed_edges.length - 20} more`);
+          }
+          console.log();
+        }
+      }
+
+      db.close();
+      break;
+    }
+
+    case "export": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+
+      const format = args[1];
+      const filterTypeArg = args.find(a => a.startsWith("--filter="));
+      const filterType = filterTypeArg ? filterTypeArg.split("=")[1] : undefined;
+      
+      const outputFile = args[2] && !args[2].startsWith("--") ? args[2] : null;
+
+      if (!format || !["json", "graphml", "gexf"].includes(format)) {
+        console.log("Usage: omnigraph export <json|graphml|gexf> [output-file] [--filter=<type>]");
+        console.log("\nFormats:");
+        console.log("  json     Raw JSON export (default: stdout)");
+        console.log("  graphml  GraphML format for Gephi");
+        console.log("  gexf     GEXF format for Cytoscape");
+        console.log("\nOptions:");
+        console.log("  --filter=<type>  Only export nodes of this type (e.g., file, function)");
+        process.exit(1);
+      }
+
+      const db = new GraphDB(dbPath);
+      let output: string;
+
+      switch (format) {
+        case "json": {
+          const data = db.exportJSON(filterType);
+          output = JSON.stringify(data, null, 2);
+          break;
+        }
+        case "graphml": {
+          if (filterType) {
+            console.error("Filter not supported for GraphML export");
+            db.close();
+            process.exit(1);
+          }
+          output = db.exportGraphML();
+          break;
+        }
+        case "gexf": {
+          if (filterType) {
+            console.error("Filter not supported for GEXF export");
+            db.close();
+            process.exit(1);
+          }
+          output = db.exportGEXF();
+          break;
+        }
+        default: {
+          db.close();
+          process.exit(1);
+        }
+      }
+
+      db.close();
+
+      if (outputFile) {
+        fs.writeFileSync(outputFile, output);
+        console.log(`✓ Exported to ${outputFile}`);
+        const stats = fs.statSync(outputFile);
+        console.log(`  Size: ${(stats.size / 1024).toFixed(2)} KB`);
+      } else {
+        console.log(output);
+      }
+      break;
+    }
+
+    case "orphans": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+      const db = new GraphDB(dbPath);
+      const allNodes = db.getAllNodes();
+      const allEdges = db.getAllEdges();
+
+      const nodeIds = new Set(allNodes.map((n: any) => n.id));
+      const fromIds = new Set(allEdges.map((e: any) => e.from_id));
+      const toIds = new Set(allEdges.map((e: any) => e.to_id));
+
+      const orphans = allNodes.filter((n: any) => !fromIds.has(n.id) && !toIds.has(n.id));
+      const unusedInputs = allNodes.filter((n: any) => n.type === "input" && !toIds.has(n.id));
+      const deadRefs = allNodes.filter((n: any) => {
+        if (n.type !== "file" || !n.file_path) return false;
+        const fullPath = path.join(projectPath, n.file_path);
+        return !fs.existsSync(fullPath);
+      });
+
+      console.log("\n## Orphan Analysis\n");
+
+      if (orphans.length > 0) {
+        console.log(`### Isolated nodes (${orphans.length}):`);
+        for (const o of orphans.slice(0, 20)) {
+          console.log(`  ${o.id} (${o.type})`);
+        }
+        if (orphans.length > 20) console.log(`  ... and ${orphans.length - 20} more`);
+        console.log();
+      }
+
+      if (unusedInputs.length > 0) {
+        console.log(`### Unused inputs (${unusedInputs.length}):`);
+        for (const i of unusedInputs) {
+          console.log(`  ${i.id}`);
+        }
+        console.log();
+      }
+
+      if (deadRefs.length > 0) {
+        console.log(`### Dead references (${deadRefs.length}):`);
+        for (const d of deadRefs) {
+          console.log(`  ${d.id} — file not found: ${d.file_path}`);
+        }
+        console.log();
+      }
+
+      if (orphans.length === 0 && unusedInputs.length === 0 && deadRefs.length === 0) {
+        console.log("✓ No orphans found!");
+      }
+
+      db.close();
+      break;
+    }
+
+    case "search": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+      const term = args[1];
+      if (!term) {
+        console.log("Usage: omnigraph search <term> [--kind=function|class|struct]");
+        process.exit(1);
+      }
+      const kindArg = args.find(a => a.startsWith("--kind="));
+      const kind = kindArg ? kindArg.split("=")[1] : undefined;
+
+      const db = new GraphDB(dbPath);
+      const results = db.searchConcepts(term, kind);
+
+      console.log(`\n## Search: "${term}"${kind ? ` (kind: ${kind})` : ""}\n`);
+      if (results.length === 0) {
+        console.log("No results found.");
+      } else {
+        for (const r of results.slice(0, 20)) {
+          console.log(`[${r.kind}] ${r.name}`);
+          if (r.file_path) console.log(`  ${r.file_path}:${r.line_number || "?"}`);
+        }
+        if (results.length > 20) console.log(`\n... and ${results.length - 20} more`);
+      }
+
+      db.close();
+      break;
+    }
+
+    case "serve": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+
+      const portArg = args.find(a => a.startsWith("--port="));
+      const port = portArg ? parseInt(portArg.split("=")[1], 10) : 8080;
+      const readOnly = args.includes("--read-only");
+
+      console.log(`\n🚀 OmniGraph HTTP Server`);
+      console.log(`   Port: ${port}`);
+      console.log(`   Mode: ${readOnly ? "read-only" : "full access"}`);
+      console.log(`   DB: ${dbPath}`);
+      console.log(`\n   Open http://localhost:${port} in your browser\n`);
+
+      const server = Bun.serve({
+        port,
+        cors: {
+          origin: "*",
+          methods: "GET, POST, OPTIONS"
+        },
+        async fetch(req) {
+          const url = new URL(req.url);
+          const path = url.pathname;
+          const method = req.method;
+
+          if (method === "OPTIONS") {
+            return new Response(null, {
+              headers: {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+              }
+            });
+          }
+
+          try {
+            const db = new GraphDB(dbPath);
+
+            // API Routes
+            if (path === "/api/nodes") {
+              const typeFilter = url.searchParams.get("type");
+              const nodes = typeFilter 
+                ? db.db.query("SELECT * FROM nodes WHERE type = ?").all(typeFilter)
+                : db.getAllNodes();
+              return jsonResponse({ nodes });
+            }
+
+            if (path.startsWith("/api/nodes/")) {
+              const nodeId = decodeURIComponent(path.replace("/api/nodes/", ""));
+              const node = db.getNodeById(nodeId);
+              if (!node) {
+                return jsonResponse({ error: "Node not found" }, 404);
+              }
+              const backlinks = db.getBacklinks(nodeId, 2);
+              const annotations = db.getAnnotationsForNode(nodeId);
+              return jsonResponse({ node, backlinks, annotations });
+            }
+
+            if (path === "/api/search") {
+              const q = url.searchParams.get("q");
+              if (!q) {
+                return jsonResponse({ error: "Missing 'q' parameter" }, 400);
+              }
+              const limit = parseInt(url.searchParams.get("limit") || "20", 10);
+              const results = db.searchConcepts(q).slice(0, limit);
+              return jsonResponse({ query: q, results });
+            }
+
+            if (path === "/api/semantic") {
+              const q = url.searchParams.get("q");
+              if (!q) {
+                return jsonResponse({ error: "Missing 'q' parameter" }, 400);
+              }
+              const top = parseInt(url.searchParams.get("top") || "10", 10);
+              const typeFilter = url.searchParams.get("type") || undefined;
+              const results = db.semanticSearch(q, top, typeFilter);
+              return jsonResponse({ query: q, results });
+            }
+
+            if (path === "/api/ask") {
+              if (method !== "POST") {
+                return jsonResponse({ error: "Method not allowed" }, 405);
+              }
+              const body = await req.json();
+              const question = body.question;
+              if (!question) {
+                return jsonResponse({ error: "Missing 'question' in body" }, 400);
+              }
+              const results = db.semanticSearch(question, 5);
+              return jsonResponse({
+                question,
+                context: results.map(r => ({
+                  id: r.node_id,
+                  label: r.node?.label,
+                  type: r.node?.type,
+                  file_path: r.node?.file_path,
+                  score: r.score
+                })),
+                suggestions: [
+                  "Use /api/nodes/:id for details",
+                  "Use /api/nodes/:id/backlinks for reverse deps",
+                  "Use /api/impact?id=... for blast radius"
+                ]
+              });
+            }
+
+            if (path === "/api/backlinks") {
+              const id = url.searchParams.get("id");
+              if (!id) {
+                return jsonResponse({ error: "Missing 'id' parameter" }, 400);
+              }
+              const depth = parseInt(url.searchParams.get("depth") || "1", 10);
+              const backlinks = db.getBacklinks(id, depth);
+              return jsonResponse({ id, depth, backlinks });
+            }
+
+            if (path === "/api/impact") {
+              const id = url.searchParams.get("id");
+              if (!id) {
+                return jsonResponse({ error: "Missing 'id' parameter" }, 400);
+              }
+              const allEdges = db.getAllEdges();
+              const allNodes = db.getAllNodes();
+              const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+              
+              const visited = new Set<string>();
+              const queue = [id];
+              visited.add(id);
+              const layers: Map<number, string[]> = new Map();
+              let depth = 0;
+
+              while (queue.length > 0) {
+                const nextQueue: string[] = [];
+                const currentLayer: string[] = [];
+                for (const current of queue) {
+                  currentLayer.push(current);
+                  const reverseDeps = allEdges.filter((e: any) =>
+                    e.to_id === current && !e.from_id.startsWith("2026-")
+                  );
+                  for (const edge of reverseDeps) {
+                    if (!visited.has(edge.from_id)) {
+                      visited.add(edge.from_id);
+                      nextQueue.push(edge.from_id);
+                    }
+                  }
+                }
+                if (currentLayer.length > 0) {
+                  layers.set(depth, currentLayer);
+                }
+                depth++;
+                queue.length = 0;
+                queue.push(...nextQueue);
+              }
+
+              const result = {
+                target: id,
+                total_affected: visited.size - 1,
+                layers: Array.from(layers.entries()).map(([d, ids]) => ({
+                  depth: d,
+                  nodes: ids.map(id => ({ id, type: nodeMap.get(id)?.type }))
+                }))
+              };
+              return jsonResponse(result);
+            }
+
+            if (path === "/api/export") {
+              const format = url.searchParams.get("format") || "json";
+              const filterType = url.searchParams.get("filter") || undefined;
+              
+              if (format === "json") {
+                const data = db.exportJSON(filterType);
+                return jsonResponse(data);
+              }
+              if (format === "graphml") {
+                const xml = db.exportGraphML();
+                return new Response(xml, {
+                  headers: { "Content-Type": "application/xml" }
+                });
+              }
+              if (format === "gexf") {
+                const xml = db.exportGEXF();
+                return new Response(xml, {
+                  headers: { "Content-Type": "application/xml" }
+                });
+              }
+              return jsonResponse({ error: "Invalid format" }, 400);
+            }
+
+            if (path === "/api/stats") {
+              const stats = db.count();
+              const nodes = db.getAllNodes();
+              const edges = db.getAllEdges();
+              const byType = new Map<string, number>();
+              for (const n of nodes) {
+                byType.set(n.type, (byType.get(n.type) || 0) + 1);
+              }
+              const byEdgeType = new Map<string, number>();
+              for (const e of edges) {
+                byEdgeType.set(e.type, (byEdgeType.get(e.type) || 0) + 1);
+              }
+              return jsonResponse({
+                total: stats,
+                nodes_by_type: Object.fromEntries(byType),
+                edges_by_type: Object.fromEntries(byEdgeType)
+              });
+            }
+
+            if (path === "/api/webhook/git-push") {
+              if (readOnly) {
+                return jsonResponse({ error: "Read-only mode" }, 403);
+              }
+              if (method !== "POST") {
+                return jsonResponse({ error: "Method not allowed" }, 405);
+              }
+              const body = await req.json();
+              console.log(`[webhook] Git push received:`, body.ref);
+              return jsonResponse({ 
+                status: "received", 
+                message: "Rebuild triggered (not implemented)"
+              });
+            }
+
+            if (path === "/") {
+              return new Response(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                  <title>OmniGraph API</title>
+                  <style>
+                    body { font-family: system-ui; background: #0d1117; color: #c9d1d9; padding: 40px; }
+                    h1 { color: #58a6ff; }
+                    code { background: #21262d; padding: 2px 8px; border-radius: 4px; }
+                    .endpoint { margin: 10px 0; padding: 10px; background: #161b22; border-radius: 6px; }
+                    a { color: #58a6ff; }
+                  </style>
+                </head>
+                <body>
+                  <h1>🚀 OmniGraph API</h1>
+                  <p>Server running on port ${port}</p>
+                  
+                  <h2>Endpoints</h2>
+                  <div class="endpoint"><code>GET /api/nodes</code> — List all nodes</div>
+                  <div class="endpoint"><code>GET /api/nodes/:id</code> — Get node details + backlinks</div>
+                  <div class="endpoint"><code>GET /api/search?q=auth</code> — Text search</div>
+                  <div class="endpoint"><code>GET /api/semantic?q=auth</code> — Semantic search</div>
+                  <div class="endpoint"><code>POST /api/ask</code> — Q&A with RAG</div>
+                  <div class="endpoint"><code>GET /api/backlinks?id=file.ts</code> — Reverse dependencies</div>
+                  <div class="endpoint"><code>GET /api/impact?id=file.ts</code> — Impact analysis</div>
+                  <div class="endpoint"><code>GET /api/export?format=json</code> — Export graph</div>
+                  <div class="endpoint"><code>GET /api/stats</code> — Graph statistics</div>
+                  <div class="endpoint"><code>POST /api/webhook/git-push</code> — Git webhook</div>
+                  
+                  <h2>Examples</h2>
+                  <pre><code>curl http://localhost:${port}/api/nodes
+curl http://localhost:${port}/api/semantic?q=auth
+curl -X POST http://localhost:${port}/api/ask -d '{"question":"Where is auth?"}'</code></pre>
+                </body>
+                </html>
+              `, {
+                headers: { "Content-Type": "text/html" }
+              });
+            }
+
+            return new Response("Not found", { status: 404 });
+          } catch (err) {
+            return jsonResponse({ error: (err as Error).message }, 500);
+          }
+        }
+      });
+
+      process.on("SIGINT", () => {
+        console.log("\n👋 Shutting down...");
+        server.stop();
+        process.exit(0);
+      });
+
       break;
     }
 

@@ -21,7 +21,12 @@
     "lessons": "bun run omnigraph.ts lessons",
     "search": "bun run omnigraph.ts search",
     "hotspots": "bun run omnigraph.ts hotspots",
-    "test": "bun run tests/test.ts",
+    "test": "bash tests/test.sh",
+    "backlinks": "bun run omnigraph.ts backlinks",
+    "snapshot": "bun run omnigraph.ts snapshot",
+    "diff": "bun run omnigraph.ts diff",
+    "embed": "bun run omnigraph.ts embed build",
+    "serve": "bun run omnigraph.ts serve",
     "screenshot": "bash tests/screenshot.sh"
   },
   "type": "module"
