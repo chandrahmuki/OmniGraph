@@ -11,30 +11,24 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         
-        omnigraph-store-path = pkgs.stdenv.mkDerivation {
-          pname = "omnigraph";
+        # Copy entire source tree to nix store
+        source = pkgs.stdenv.mkDerivation {
+          pname = "omnigraph-src";
           version = "0.2.0";
           src = self;
           
           installPhase = ''
             mkdir -p $out/share/omnigraph
-            # Remove the shebang line and let bun handle it
-            tail -n +2 omnigraph.ts > $out/share/omnigraph/omnigraph.ts
-            cp package.json $out/share/omnigraph/
-            
-            # Copy node_modules if exists
-            if [ -d node_modules ]; then
-              cp -r node_modules $out/share/omnigraph/
-            fi
-            
-            echo $out > $out/share/omnigraph-path
+            cp -r . $out/share/omnigraph
+            # Remove the shebang from omnigraph.ts
+            tail -n +2 $out/share/omnigraph/omnigraph.ts > $out/share/omnigraph/omnigraph.tmp.ts
+            mv $out/share/omnigraph/omnigraph.tmp.ts $out/share/omnigraph/omnigraph.ts
           '';
         };
       in
       {
         packages.omnigraph = pkgs.writeShellScriptBin "omnigraph" ''
-          OMNIGRAPH_PATH=$(cat ${omnigraph-store-path}/share/omnigraph-path)
-          exec ${pkgs.bun}/bin/bun run "$OMNIGRAPH_PATH/share/omnigraph/omnigraph.ts" "$@"
+          exec ${pkgs.bun}/bin/bun run ${source}/share/omnigraph/omnigraph.ts "$@"
         '';
 
         packages.default = self.packages.${system}.omnigraph;
