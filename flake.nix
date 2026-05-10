@@ -10,20 +10,22 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        
-        omnigraph-pkg = pkgs.buildNpmPackage {
+      in
+      {
+        packages.omnigraph = pkgs.stdenv.mkDerivation {
           pname = "omnigraph";
           version = "0.2.0";
           src = self;
           
-          nativeBuildInputs = with pkgs; [ bun ];
-          buildInputs = with pkgs; [ bun ];
-          
-          # Just copy the ts file and create a wrapper
           installPhase = ''
             mkdir -p $out/bin $out/share/omnigraph
             cp omnigraph.ts $out/share/omnigraph/
             cp package.json $out/share/omnigraph/
+            
+            # Copy node_modules if exists
+            if [ -d node_modules ]; then
+              cp -r node_modules $out/share/omnigraph/
+            fi
             
             cat > $out/bin/omnigraph << 'EOF'
 #!/bin/sh
@@ -32,9 +34,7 @@ EOF
             chmod +x $out/bin/omnigraph
           '';
         };
-      in
-      {
-        packages.omnigraph = omnigraph-pkg;
+
         packages.default = self.packages.${system}.omnigraph;
 
         apps.omnigraph = flake-utils.lib.mkApp {
