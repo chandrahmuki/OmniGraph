@@ -300,7 +300,43 @@ omnigraph github status                # Show linked repo status
 
 ## Phase 4: Advanced Features (4-6 semaines)
 
-### 4.1 Multi-User & Permissions 👥
+### 4.1 Auto-Summaries & Cluster Labeling 🏷️
+**Statut:** ✅ IMPLÉMENTÉ
+
+**Commandes:**
+```bash
+omnigraph summarize <node-id>          # Generate summary for a node
+omnigraph summarize --clusters         # Label all clusters
+```
+
+**Implémentation:**
+- `generateSummary(nodeId)`: Résumé auto avec contexte
+- `getRelatedNodes(nodeId, hops)`: BFS pour trouver les connexions
+- `computeAnalytics()`: Stats complètes du graph
+- Clusters par dossier racine
+- Hub nodes detection (top 10 par degré)
+
+**Sortie:**
+```
+## Summary: db.ts
+db.ts is a file located in db.ts. It has 220 related nodes within 2 hops.
+Connected to: 53 change, 120 function, 8 file, 8 fix...
+Clusters: db.ts, extractors, web
+```
+
+**Analytics:**
+- Density: 0.25%
+- Avg Degree: 3.44
+- Hub nodes: db.ts (74), omnigraph.ts:fetch (67)
+- Clusters: extractors/ (212), memory/ (125)
+
+**API Endpoints:**
+- `GET /api/analytics` — Analytics complètes
+- `GET /api/summarize/:id` — Résumé d'un node
+
+---
+
+### 4.2 Multi-User & Permissions 👥
 **Priorité:** LOW | **Effort:** 3 jours
 
 **Features:**
