@@ -668,67 +668,159 @@ export class GraphDB {
     return dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1);
   }
 
-  embedAndStore(): { embedded: number; failed: number } {
-    const nodes = this.getAllNodes();
-    let embedded = 0;
-    let failed = 0;
+  getRelatedNodes(nodeId: string, hops: number = 2): { id: string; type: string; label: string; distance: number }[] {
+    const visited = new Map<string, number>();
+    const queue: { id: string; distance: number }[] = [{ id: nodeId, distance: 0 }];
+    visited.set(nodeId, 0);
+    const results: { id: string; type: string; label: string; distance: number }[] = [];
 
-    this.runInTransaction(() => {
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS embeddings (
-          node_id TEXT PRIMARY KEY,
-          vector BLOB NOT NULL,
-          model_version TEXT DEFAULT 'simple-hash-64',
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_embeddings_vector ON embeddings(node_id);
-      `);
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current.distance >= hops) continue;
 
-      const stmt = this.db.prepare("INSERT OR REPLACE INTO embeddings (node_id, vector, model_version) VALUES (?, ?, ?)");
-      
-      for (const node of nodes) {
-        try {
-          const text = `${node.label} ${node.type} ${node.file_path || ''}`.trim();
-          const vector = this.simpleHash(text);
-          stmt.run(node.id, Buffer.from(new Float64Array(vector).buffer), 'simple-hash-64');
-          embedded++;
-        } catch {
-          failed++;
+      const edges = this.db.query(`
+        SELECT e.from_id, e.to_id, n.type, n.label
+        FROM edges e
+        LEFT JOIN nodes n ON e.to_id = n.id
+        WHERE e.from_id = ?
+        UNION
+        SELECT e.from_id, e.to_id, n.type, n.label
+        FROM edges e
+        LEFT JOIN nodes n ON e.from_id = n.id
+        WHERE e.to_id = ?
+      `).all(current.id, current.id) as any[];
+
+      for (const edge of edges) {
+        const neighborId = edge.from_id === current.id ? edge.to_id : edge.from_id;
+        if (!visited.has(neighborId)) {
+          visited.set(neighborId, current.distance + 1);
+          results.push({
+            id: neighborId,
+            type: edge.type || "unknown",
+            label: edge.label || neighborId,
+            distance: current.distance + 1
+          });
+          queue.push({ id: neighborId, distance: current.distance + 1 });
         }
       }
-    });
+    }
 
-    return { embedded, failed };
+    return results;
   }
 
-  semanticSearch(query: string, topK: number = 10, typeFilter?: string): { node_id: string; score: number; node: any }[] {
-    const queryVector = this.simpleHash(query);
-    
-    let sql = `SELECT e.node_id, e.vector FROM embeddings e`;
-    if (typeFilter) {
-      sql += ` JOIN nodes n ON e.node_id = n.id WHERE n.type = ?`;
-    }
-    
-    const rows = typeFilter 
-      ? this.db.query(sql).all(typeFilter) as { node_id: string; vector: Buffer }[]
-      : this.db.query(sql).all() as { node_id: string; vector: Buffer }[];
+  generateSummary(nodeId: string): { summary: string; context: string[]; clusters: string[] } | null {
+    const node = this.getNodeById(nodeId);
+    if (!node) return null;
 
-    const results: { node_id: string; score: number; node: any }[] = [];
+    const related = this.getRelatedNodes(nodeId, 2);
+    const annotations = this.getAnnotationsForNode(nodeId);
     
-    for (const row of rows) {
-      const vector = new Float64Array(row.vector.buffer);
-      const score = this.cosineSimilarity(queryVector, Array.from(vector));
-      results.push({ node_id: row.node_id, score, node: null });
+    const context: string[] = [];
+    context.push(`Node: ${node.label} (${node.type})`);
+    if (node.file_path) context.push(`File: ${node.file_path}`);
+    
+    const byType = new Map<string, number>();
+    for (const r of related) {
+      byType.set(r.type, (byType.get(r.type) || 0) + 1);
     }
 
-    results.sort((a, b) => b.score - a.score);
-    
-    const topResults = results.slice(0, topK);
-    for (const result of topResults) {
-      result.node = this.getNodeById(result.node_id);
+    const clusters = new Set<string>();
+    if (node.file_path) {
+      clusters.add(node.file_path.split('/')[0]);
+    }
+    for (const r of related) {
+      if (r.type === 'file' && related.some(x => x.id.includes(r.id))) {
+        const parts = r.id.split('/');
+        if (parts.length > 1) clusters.add(parts[0]);
+      }
     }
 
-    return topResults;
+    let summary = `${node.label} is a ${node.type}`;
+    if (node.file_path) summary += ` located in ${node.file_path}`;
+    summary += `. It has ${related.length} related nodes within 2 hops.`;
+    
+    if (byType.size > 0) {
+      const typeSummary = Array.from(byType.entries())
+        .map(([type, count]) => `${count} ${type}`)
+        .join(', ');
+      summary += ` Connected to: ${typeSummary}.`;
+    }
+
+    if (annotations.length > 0) {
+      const tags = annotations.filter(a => a.key === 'tag').map(a => a.value);
+      if (tags.length > 0) {
+        summary += ` Tags: ${tags.join(', ')}.`;
+      }
+    }
+
+    return { summary, context, clusters: Array.from(clusters) };
+  }
+
+  computeAnalytics(): {
+    total_nodes: number;
+    total_edges: number;
+    by_type: Record<string, number>;
+    by_edge_type: Record<string, number>;
+    density: number;
+    avg_degree: number;
+    isolated_nodes: number;
+    hub_nodes: { id: string; degree: number }[];
+    clusters: { name: string; size: number }[];
+  } {
+    const nodes = this.getAllNodes();
+    const edges = this.getAllEdges();
+    
+    const byType = new Map<string, number>();
+    for (const n of nodes) {
+      byType.set(n.type, (byType.get(n.type) || 0) + 1);
+    }
+
+    const byEdgeType = new Map<string, number>();
+    for (const e of edges) {
+      byEdgeType.set(e.type, (byEdgeType.get(e.type) || 0) + 1);
+    }
+
+    const degreeMap = new Map<string, number>();
+    for (const e of edges) {
+      degreeMap.set(e.from_id, (degreeMap.get(e.from_id) || 0) + 1);
+      degreeMap.set(e.to_id, (degreeMap.get(e.to_id) || 0) + 1);
+    }
+
+    const degrees = Array.from(degreeMap.values());
+    const avgDegree = degrees.length > 0 ? degrees.reduce((a, b) => a + b, 0) / degrees.length : 0;
+    const maxPossibleEdges = nodes.length * (nodes.length - 1);
+    const density = maxPossibleEdges > 0 ? edges.length / maxPossibleEdges : 0;
+
+    const isolatedNodes = nodes.filter(n => !degreeMap.has(n.id)).length;
+
+    const hubNodes = Array.from(degreeMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([id, degree]) => ({ id, degree }));
+
+    const clusterMap = new Map<string, number>();
+    for (const n of nodes) {
+      if (n.file_path) {
+        const folder = n.file_path.split('/')[0];
+        clusterMap.set(folder, (clusterMap.get(folder) || 0) + 1);
+      }
+    }
+    const clusters = Array.from(clusterMap.entries())
+      .map(([name, size]) => ({ name, size }))
+      .sort((a, b) => b.size - a.size)
+      .slice(0, 10);
+
+    return {
+      total_nodes: nodes.length,
+      total_edges: edges.length,
+      by_type: Object.fromEntries(byType),
+      by_edge_type: Object.fromEntries(byEdgeType),
+      density,
+      avg_degree: parseFloat(avgDegree.toFixed(2)),
+      isolated_nodes: isolatedNodes,
+      hub_nodes: hubNodes,
+      clusters
+    };
   }
 
   getCurrentGraphHash(): { nodes_hash: string; edges_hash: string; nodes: number; edges: number } {

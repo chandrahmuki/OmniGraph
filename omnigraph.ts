@@ -114,6 +114,11 @@ Commands:
                query <text>     Semantic search (--top=N, --type=)
   ask        AI-powered Q&A over your codebase (RAG)
                <question>       Natural language question
+  summarize  Generate summaries for nodes and clusters
+               <node-id>        Summary for specific node
+               --clusters       Summarize all clusters
+  analytics  Graph statistics and metrics
+               --json           Output as JSON
   serve      Start HTTP API server
                --port=N         Port number (default: 8080)
                --read-only      Read-only mode (no write operations)
@@ -162,6 +167,9 @@ Examples:
   omnigraph embed build
   omnigraph embed query "auth handling"
   omnigraph ask "Where is auth handled?"
+  omnigraph summarize db.ts
+  omnigraph summarize --clusters
+  omnigraph analytics
   omnigraph serve --port=8080
   omnigraph orphans
   omnigraph git-log
@@ -1067,6 +1075,106 @@ Topic: ${topic}
       break;
     }
 
+    case "summarize": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+
+      const target = args[1];
+      const clustersOnly = args.includes("--clusters");
+
+      if (!target && !clustersOnly) {
+        console.log("Usage: omnigraph summarize <node-id> [--clusters]");
+        console.log("       omnigraph summarize --clusters  # Summarize all clusters");
+        process.exit(1);
+      }
+
+      const db = new GraphDB(dbPath);
+
+      if (clustersOnly) {
+        const analytics = db.computeAnalytics();
+        console.log("\n## Cluster Summaries\n");
+        for (const cluster of analytics.clusters) {
+          console.log(`### ${cluster.name}/ (${cluster.size} nodes)`);
+          console.log(`   Folder containing ${cluster.size} files and related entities\n`);
+        }
+        db.close();
+        break;
+      }
+
+      const result = db.generateSummary(target);
+      if (!result) {
+        console.log(`Node not found: ${target}`);
+        db.close();
+        process.exit(1);
+      }
+
+      console.log(`\n## Summary: ${target}\n`);
+      console.log(`${result.summary}\n`);
+      
+      if (result.clusters.length > 0) {
+        console.log(`**Clusters:** ${result.clusters.join(', ')}\n`);
+      }
+
+      if (result.context.length > 0) {
+        console.log(`**Context:**`);
+        for (const ctx of result.context) {
+          console.log(`- ${ctx}`);
+        }
+        console.log();
+      }
+
+      db.close();
+      break;
+    }
+
+    case "analytics": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+
+      const asJson = args.includes("--json");
+      const db = new GraphDB(dbPath);
+      const analytics = db.computeAnalytics();
+      db.close();
+
+      if (asJson) {
+        console.log(JSON.stringify(analytics, null, 2));
+      } else {
+        console.log("\n## Graph Analytics\n");
+        console.log(`**Total:** ${analytics.total_nodes} nodes, ${analytics.total_edges} edges`);
+        console.log(`**Density:** ${(analytics.density * 100).toFixed(4)}%`);
+        console.log(`**Avg Degree:** ${analytics.avg_degree}\n`);
+
+        console.log("### Nodes by Type:");
+        for (const [type, count] of Object.entries(analytics.by_type).slice(0, 10)) {
+          console.log(`  ${type}: ${count}`);
+        }
+
+        console.log("\n### Edges by Type:");
+        for (const [type, count] of Object.entries(analytics.by_edge_type).slice(0, 10)) {
+          console.log(`  ${type}: ${count}`);
+        }
+
+        console.log("\n### Hub Nodes (Top 10):");
+        for (const hub of analytics.hub_nodes) {
+          console.log(`  ${hub.id}: ${hub.degree} connections`);
+        }
+
+        console.log("\n### Clusters (Top 10):");
+        for (const cluster of analytics.clusters) {
+          console.log(`  ${cluster.name}/: ${cluster.size} nodes`);
+        }
+
+        if (analytics.isolated_nodes > 0) {
+          console.log(`\n⚠️  ${analytics.isolated_nodes} isolated nodes found`);
+        }
+      }
+      break;
+    }
+
     case "serve": {
       if (!fs.existsSync(dbPath)) {
         console.error("DB not found. Run 'omnigraph build' first.");
@@ -1276,6 +1384,20 @@ Topic: ${topic}
               });
             }
 
+            if (path === "/api/analytics") {
+              const analytics = db.computeAnalytics();
+              return jsonResponse(analytics);
+            }
+
+            if (path.startsWith("/api/summarize/")) {
+              const nodeId = decodeURIComponent(path.replace("/api/summarize/", ""));
+              const result = db.generateSummary(nodeId);
+              if (!result) {
+                return jsonResponse({ error: "Node not found" }, 404);
+              }
+              return jsonResponse(result);
+            }
+
             if (path === "/api/webhook/git-push") {
               if (readOnly) {
                 return jsonResponse({ error: "Read-only mode" }, 403);
@@ -1319,6 +1441,8 @@ Topic: ${topic}
                   <div class="endpoint"><code>GET /api/impact?id=file.ts</code> — Impact analysis</div>
                   <div class="endpoint"><code>GET /api/export?format=json</code> — Export graph</div>
                   <div class="endpoint"><code>GET /api/stats</code> — Graph statistics</div>
+                  <div class="endpoint"><code>GET /api/analytics</code> — Advanced analytics (density, hubs, clusters)</div>
+                  <div class="endpoint"><code>GET /api/summarize/:id</code> — Auto-summary for a node</div>
                   <div class="endpoint"><code>POST /api/webhook/git-push</code> — Git webhook</div>
                   
                   <h2>Examples</h2>
