@@ -514,6 +514,7 @@ function extractTsJs(
   const nodes: ExtractedNode[] = [];
   const edges: ExtractedEdge[] = [];
   const seenNodes = new Set<string>();
+  const importedNames = new Map<string, string>();
 
   function addNode(id: string, type: string, label: string, fp?: string, line?: number) {
     if (!seenNodes.has(id)) {
@@ -576,6 +577,7 @@ function extractTsJs(
         const nameId = `${resolvedWithExt}:${name}`;
         addNode(nameId, "function", name, resolvedWithExt);
         edges.push({ from_id: filePath, to_id: nameId, type: "uses_input", confidence: "inferred" });
+        importedNames.set(name, resolvedWithExt);
       }
     } else {
       const pkgName = imp.source.startsWith("@") ? imp.source.split("/").slice(0, 2).join("/") : imp.source.split("/")[0];
@@ -588,15 +590,15 @@ function extractTsJs(
   for (const call of result.calls) {
     const callee = call.callee;
     const simpleName = callee.includes(".") ? callee.split(".").pop()! : callee;
-    if (knownFunctions && !knownFunctions.simpleNames.has(simpleName) && !knownFunctions.qualifiedNames.has(callee)) {
-      continue;
+    
+    let targetFile = filePath;
+    if (importedNames.has(simpleName)) {
+      targetFile = importedNames.get(simpleName)!;
+    } else if (knownFunctions) {
+      targetFile = findFileForFunction(callee, knownFunctions, filePath);
     }
-    const targetFile = knownFunctions
-      ? findFileForFunction(callee, knownFunctions, filePath)
-      : filePath;
-    const callTargetId = knownFunctions && knownFunctions.qualifiedNames.has(callee)
-      ? callee
-      : `${targetFile}:${simpleName}`;
+    
+    const callTargetId = `${targetFile}:${simpleName}`;
     const callerFn = findCallerFunction(filePath, result.functions, call.row);
     const fromId = callerFn || filePath;
     addNode(callTargetId, "function", simpleName, targetFile);
@@ -734,6 +736,7 @@ function extractPython(
   const nodes: ExtractedNode[] = [];
   const edges: ExtractedEdge[] = [];
   const seenNodes = new Set<string>();
+  const importedNames = new Map<string, string>();
 
   function addNode(id: string, type: string, label: string, fp?: string, line?: number) {
     if (!seenNodes.has(id)) {
@@ -777,6 +780,11 @@ function extractPython(
       const resolvedWithExt = resolved.endsWith(".py") ? resolved : resolved + ".py";
       addNode(resolvedWithExt, "file", resolvedWithExt.split("/").pop() || resolvedWithExt, resolvedWithExt);
       edges.push({ from_id: filePath, to_id: resolvedWithExt, type: "imports", confidence: "extracted" });
+      for (const name of imp.names) {
+        if (name !== "*") {
+          importedNames.set(name, resolvedWithExt);
+        }
+      }
     } else {
       const pkgName = imp.module.split(".")[0] || imp.names[0];
       if (pkgName && pkgName !== "*") {
@@ -796,15 +804,15 @@ function extractPython(
   for (const call of result.calls) {
     const callee = call.callee;
     const simpleName = callee.includes(".") ? callee.split(".").pop()! : callee;
-    if (knownFunctions && !knownFunctions.simpleNames.has(simpleName) && !knownFunctions.qualifiedNames.has(callee)) {
-      continue;
+    
+    let targetFile = filePath;
+    if (importedNames.has(simpleName)) {
+      targetFile = importedNames.get(simpleName)!;
+    } else if (knownFunctions) {
+      targetFile = findFileForFunction(callee, knownFunctions, filePath);
     }
-    const targetFile = knownFunctions
-      ? findFileForFunction(callee, knownFunctions, filePath)
-      : filePath;
-    const callTargetId = knownFunctions && knownFunctions.qualifiedNames.has(callee)
-      ? callee
-      : `${targetFile}:${simpleName}`;
+    
+    const callTargetId = `${targetFile}:${simpleName}`;
     const callerFn = findCallerFunction(filePath, result.functions, call.row);
     const fromId = callerFn || filePath;
     addNode(callTargetId, "function", simpleName, targetFile);
@@ -937,6 +945,7 @@ function extractRust(
   const nodes: ExtractedNode[] = [];
   const edges: ExtractedEdge[] = [];
   const seenNodes = new Set<string>();
+  const importedNames = new Map<string, string>();
 
   function addNode(id: string, type: string, label: string, fp?: string, line?: number) {
     if (!seenNodes.has(id)) {
@@ -1000,6 +1009,8 @@ function extractRust(
       const possibleFile = resolvedPath + ".rs";
       addNode(possibleFile, "file", possibleFile.split("/").pop() || possibleFile, possibleFile);
       edges.push({ from_id: filePath, to_id: possibleFile, type: "imports", confidence: "extracted" });
+      const name = path.split("::").pop();
+      if (name) importedNames.set(name, possibleFile);
     } else {
       const crateName = path.split("::")[0];
       if (crateName && crateName !== "{" && crateName !== "*") {
@@ -1019,15 +1030,15 @@ function extractRust(
   for (const call of result.calls) {
     const callee = call.callee;
     const simpleName = callee.includes("::") ? callee.split("::").pop()! : (callee.includes(".") ? callee.split(".").pop()! : callee);
-    if (knownFunctions && !knownFunctions.simpleNames.has(simpleName) && !knownFunctions.qualifiedNames.has(callee)) {
-      continue;
+    
+    let targetFile = filePath;
+    if (importedNames.has(simpleName)) {
+      targetFile = importedNames.get(simpleName)!;
+    } else if (knownFunctions) {
+      targetFile = findFileForFunction(callee, knownFunctions, filePath);
     }
-    const targetFile = knownFunctions
-      ? findFileForFunction(callee, knownFunctions, filePath)
-      : filePath;
-    const callTargetId = knownFunctions && knownFunctions.qualifiedNames.has(callee)
-      ? callee
-      : `${targetFile}:${simpleName}`;
+    
+    const callTargetId = `${targetFile}:${simpleName}`;
     const callerFn = findCallerFunction(filePath, result.functions, call.row);
     const fromId = callerFn || filePath;
     addNode(callTargetId, "function", simpleName, targetFile);
@@ -1139,6 +1150,7 @@ function extractGo(
   const nodes: ExtractedNode[] = [];
   const edges: ExtractedEdge[] = [];
   const seenNodes = new Set<string>();
+  const importedNames = new Map<string, string>();
 
   function addNode(id: string, type: string, label: string, fp?: string, line?: number) {
     if (!seenNodes.has(id)) {
@@ -1183,21 +1195,22 @@ function extractGo(
       const pkgId = `pkg.${pkgName}`;
       addNode(pkgId, "input", pkgName);
       edges.push({ from_id: filePath, to_id: pkgId, type: "uses_input", confidence: "inferred" });
+      importedNames.set(pkgName, `pkg.${pkgName}`);
     }
   }
 
   for (const call of result.calls) {
     const callee = call.callee;
     const simpleName = callee.includes(".") ? callee.split(".").pop()! : callee;
-    if (knownFunctions && !knownFunctions.simpleNames.has(simpleName) && !knownFunctions.qualifiedNames.has(callee)) {
-      continue;
+    
+    let targetFile = filePath;
+    if (importedNames.has(simpleName)) {
+      targetFile = importedNames.get(simpleName)!;
+    } else if (knownFunctions) {
+      targetFile = findFileForFunction(callee, knownFunctions, filePath);
     }
-    const targetFile = knownFunctions
-      ? findFileForFunction(callee, knownFunctions, filePath)
-      : filePath;
-    const callTargetId = knownFunctions && knownFunctions.qualifiedNames.has(callee)
-      ? callee
-      : `${targetFile}:${simpleName}`;
+    
+    const callTargetId = `${targetFile}:${simpleName}`;
     const callerFn = findCallerFunction(filePath, result.functions, call.row);
     const fromId = callerFn || filePath;
     addNode(callTargetId, "function", simpleName, targetFile);

@@ -447,6 +447,29 @@ Topic: ${topic}
       if (refsGenerated.length) console.log(`↓ refs_generated: ${refsGenerated.join(", ")}`);
       if (usedBy.length) console.log(`↑ used_by: ${usedBy.join(", ")}`);
       else console.log(`↑ used_by: (none)`);
+
+      const functionsInFile = allNodes.filter((n: any) => n.type === "function" && n.file_path === target);
+      const calledByOtherFiles = new Map<string, string[]>();
+      for (const fn of functionsInFile) {
+        const callers = allEdges
+          .filter(e => e.to_id === fn.id && e.type === "calls")
+          .map(e => e.from_id)
+          .filter(fromId => {
+            const fromFile = fromId.split(":")[0];
+            return fromFile !== target;
+          });
+        if (callers.length > 0) {
+          calledByOtherFiles.set(fn.label, callers);
+        }
+      }
+      if (calledByOtherFiles.size > 0) {
+        console.log(`↑ called_by (cross-file):`);
+        for (const [fnName, callers] of calledByOtherFiles) {
+          const callerFiles = [...new Set(callers.map(c => c.split(":")[0]))];
+          console.log(`  ${fnName} ← ${callerFiles.join(", ")}`);
+        }
+      }
+
       if (sessions.length) console.log(`📝 sessions: ${sessions.slice(-5).join(", ")}`);
       if (lessons.length) console.log(`📖 lessons: ${lessons.join(", ")}`);
       if (errorNodes.length) {
