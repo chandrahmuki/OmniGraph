@@ -10,10 +10,12 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        
+        omnigraph-script = pkgs.writeScript "omnigraph.ts" (builtins.readFile ./omnigraph.ts);
       in
       {
         packages.omnigraph = pkgs.writeShellScriptBin "omnigraph" ''
-          exec ${pkgs.bun}/bin/bun run ${self}/omnigraph.ts "$@"
+          exec ${pkgs.bun}/bin/bun run ${omnigraph-script} "$@"
         '';
 
         packages.default = self.packages.${system}.omnigraph;
