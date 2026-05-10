@@ -109,6 +109,35 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
   let skippedCount = 0;
   let scannedCount = 0;
 
+  const pendingNodes: any[] = [];
+  const pendingEdges: any[] = [];
+  const pendingConcepts: any[] = [];
+  const BATCH_SIZE = 500;
+
+  const flushBatch = () => {
+    if (pendingNodes.length > 0) {
+      db.insertNodesBatch(pendingNodes);
+      pendingNodes.length = 0;
+    }
+    if (pendingEdges.length > 0) {
+      db.insertEdgesBatch(pendingEdges);
+      pendingEdges.length = 0;
+    }
+    if (pendingConcepts.length > 0) {
+      db.insertConceptsBatch(pendingConcepts);
+      pendingConcepts.length = 0;
+    }
+  };
+
+  const existingHashCache = new Map<string, string>();
+
+  if (incremental) {
+    const allNodes = db.getAllNodesMinimal();
+    for (const n of allNodes) {
+      if (n.content_hash) existingHashCache.set(n.id, n.content_hash);
+    }
+  }
+
   for (const scanDir of config.scan_dirs) {
     const fullDir = path.resolve(projectPath, scanDir);
     if (!fs.existsSync(fullDir)) continue;
@@ -125,8 +154,8 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
         const contentHash = computeHash(content);
 
         if (incremental) {
-          const existingNode = db.getNodeById(relativePath);
-          if (existingNode && existingNode.content_hash === contentHash) {
+          const existingHash = existingHashCache.get(relativePath);
+          if (existingHash && existingHash === contentHash) {
             skippedCount++;
             continue;
           }
@@ -159,20 +188,26 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
         }
 
         for (const node of result.nodes) {
-          db.insertNode(node);
+          pendingNodes.push(node);
         }
         for (const edge of result.edges) {
-          db.insertEdge(edge);
+          pendingEdges.push(edge);
         }
         if (result.concepts) {
           for (const concept of result.concepts) {
-            db.insertConcept(concept);
+            pendingConcepts.push(concept);
           }
+        }
+
+        if (pendingNodes.length >= BATCH_SIZE) {
+          flushBatch();
         }
       } catch {
       }
     }
   }
+
+  flushBatch();
 
   if (incremental) {
     console.log(`Incremental: scanned ${scannedCount}, skipped ${skippedCount} unchanged`);
@@ -180,11 +215,10 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
     console.log(`Scanned ${scannedCount} files`);
   }
 
-  const allNodes = db.getAllNodes();
-  const allEdges = db.getAllEdges();
+  const usesInputEdges = db.getUsesInputEdges();
   const fileToInputs = new Map<string, string[]>();
-  for (const e of allEdges) {
-    if (e.type === "uses_input" && (e.from_id.endsWith(".ts") || e.from_id.endsWith(".js") || e.from_id.endsWith(".py") || e.from_id.endsWith(".rs") || e.from_id.endsWith(".go") || e.from_id.endsWith(".nix"))) {
+  for (const e of usesInputEdges) {
+    if (e.from_id.endsWith(".ts") || e.from_id.endsWith(".js") || e.from_id.endsWith(".py") || e.from_id.endsWith(".rs") || e.from_id.endsWith(".go") || e.from_id.endsWith(".nix")) {
       if (!fileToInputs.has(e.from_id)) fileToInputs.set(e.from_id, []);
       fileToInputs.get(e.from_id)!.push(e.to_id);
     }
@@ -198,45 +232,48 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
     }
   }
 
+  const sharedDepNodes: any[] = [];
+  const sharedDepEdges: any[] = [];
   for (const [input, files] of sharedDeps) {
     if (files.length >= 2) {
       const hubId = `_shared_dep:${input}`;
-      db.insertNode({ id: hubId, type: "shared_dependency", label: input });
+      sharedDepNodes.push({ id: hubId, type: "shared_dependency", label: input });
       for (const file of files) {
-        db.insertEdge({ from_id: file, to_id: hubId, type: "shares_dep", confidence: "inferred" });
+        sharedDepEdges.push({ from_id: file, to_id: hubId, type: "shares_dep", confidence: "inferred" });
       }
     }
   }
 
+  if (sharedDepNodes.length > 0) {
+    db.insertNodesBatch(sharedDepNodes);
+    db.insertEdgesBatch(sharedDepEdges);
+  }
+
   if (config.memory) {
     const memResult = extractMemory(projectPath, config.memory, config.mappings);
-    for (const node of memResult.nodes) {
-      db.insertNode(node);
-    }
-    for (const edge of memResult.edges) {
-      db.insertEdge(edge);
-    }
-    if (memResult.annotations) {
-      for (const ann of memResult.annotations) {
-        db.insertAnnotation(ann);
+    if (memResult.nodes.length > 0 || memResult.edges.length > 0 || memResult.annotations?.length) {
+      db.insertNodesBatch(memResult.nodes);
+      db.insertEdgesBatch(memResult.edges);
+      if (memResult.annotations) {
+        for (const ann of memResult.annotations) {
+          db.insertAnnotation(ann);
+        }
       }
     }
   }
 
   const gitResult = extractGitChanges(projectPath);
-  for (const node of gitResult.nodes) {
-    db.insertNode(node);
-  }
-  for (const edge of gitResult.edges) {
-    db.insertEdge(edge);
-  }
-  if (gitResult.annotations) {
-    for (const ann of gitResult.annotations) {
-      db.insertAnnotation(ann);
+  if (gitResult.nodes.length > 0 || gitResult.edges.length > 0 || gitResult.annotations?.length) {
+    db.insertNodesBatch(gitResult.nodes);
+    db.insertEdgesBatch(gitResult.edges);
+    if (gitResult.annotations) {
+      for (const ann of gitResult.annotations) {
+        db.insertAnnotation(ann);
+      }
     }
   }
 
-  const previousEdges = db.getAllEdges().filter((e: any) => e.type !== "indexes" && e.valid_from);
+  const previousEdges = db.getEdgesWithValidFrom();
   const now = new Date().toISOString();
 
   const allCurrentEdges = db.getAllEdges();
@@ -246,14 +283,14 @@ export async function scanAndExtract(projectPath: string, db: GraphDB, increment
 
   for (const prev of previousEdges) {
     const key = `${prev.from_id}|${prev.to_id}|${prev.type}`;
-    if (!currentEdgeKeys.has(key) && !prev.valid_until) {
-      db.updateEdgeValidUntil(prev.id, now);
+    if (!currentEdgeKeys.has(key)) {
+      db.stmtCache.get('updateEdgeValidUntil').run(now, prev.id);
     }
   }
 
   for (const edge of allCurrentEdges) {
     if (!edge.valid_from) {
-      db.db.prepare("UPDATE edges SET valid_from = ? WHERE id = ?").run(now, edge.id);
+      db.stmtCache.get('setEdgeValidFrom').run(now, edge.id);
     }
   }
 }

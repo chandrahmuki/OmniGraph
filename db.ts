@@ -39,11 +39,13 @@ export interface Concept {
 
 export class GraphDB {
   db: Database;
+  private stmtCache: Map<string, any> = new Map();
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.init();
+    this.prepareStatements();
   }
 
   private init() {
@@ -76,6 +78,12 @@ export class GraphDB {
       CREATE INDEX IF NOT EXISTS idx_edges_from_type ON edges(from_id, type);
       CREATE INDEX IF NOT EXISTS idx_edges_to_type ON edges(to_id, type);
 
+      CREATE TABLE IF NOT EXISTS annotations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        node_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_annotations_node ON annotations(node_id);
       CREATE INDEX IF NOT EXISTS idx_annotations_key ON annotations(key);
       CREATE INDEX IF NOT EXISTS idx_annotations_node_key ON annotations(node_id, key);
@@ -94,6 +102,11 @@ export class GraphDB {
       CREATE INDEX IF NOT EXISTS idx_concepts_node ON concepts(node_id);
     `);
 
+    this.db.exec("PRAGMA synchronous = OFF");
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA cache_size = -64000");
+    this.db.exec("PRAGMA temp_store = MEMORY");
+
     try {
       this.db.exec("ALTER TABLE nodes ADD COLUMN created_at TEXT");
     } catch {}
@@ -105,35 +118,119 @@ export class GraphDB {
     } catch {}
   }
 
-  insertNode(node: { id: string; type: string; label: string; file_path?: string; line_number?: number; content_hash?: string; created_at?: string }) {
-    const stmt = this.db.prepare(
+  private prepareStatements() {
+    this.stmtCache.set('insertNode', this.db.prepare(
       `INSERT OR IGNORE INTO nodes (id, type, label, file_path, line_number, content_hash, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
-    );
-    stmt.run(node.id, node.type, node.label, node.file_path || null, node.line_number || null, node.content_hash || null, node.created_at || null);
+    ));
+    this.stmtCache.set('insertEdge', this.db.prepare(
+      `INSERT OR IGNORE INTO edges (from_id, to_id, type, confidence)
+       VALUES (?, ?, ?, ?)`
+    ));
+    this.stmtCache.set('insertAnnotation', this.db.prepare(
+      `INSERT INTO annotations (node_id, key, value) VALUES (?, ?, ?)`
+    ));
+    this.stmtCache.set('insertConcept', this.db.prepare(
+      `INSERT OR IGNORE INTO concepts (node_id, kind, name, file_path, line_number, snippet)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ));
+    this.stmtCache.set('getNodeById', this.db.prepare(
+      `SELECT * FROM nodes WHERE id = ?`
+    ));
+    this.stmtCache.set('getAllNodes', this.db.prepare(
+      `SELECT * FROM nodes`
+    ));
+    this.stmtCache.set('getAllNodesMinimal', this.db.prepare(
+      `SELECT id, content_hash FROM nodes`
+    ));
+    this.stmtCache.set('deleteEdgesFromNode', this.db.prepare(
+      `DELETE FROM edges WHERE from_id = ?`
+    ));
+    this.stmtCache.set('deleteNode', this.db.prepare(
+      `DELETE FROM nodes WHERE id = ?`
+    ));
+    this.stmtCache.set('deleteEdges', this.db.prepare(
+      `DELETE FROM edges WHERE from_id = ?`
+    ));
+    this.stmtCache.set('deleteAnnotations', this.db.prepare(
+      `DELETE FROM annotations WHERE node_id = ?`
+    ));
+    this.stmtCache.set('updateEdgeValidUntil', this.db.prepare(
+      `UPDATE edges SET valid_until = ? WHERE id = ?`
+    ));
+    this.stmtCache.set('setEdgeValidFrom', this.db.prepare(
+      `UPDATE edges SET valid_from = ? WHERE id = ?`
+    ));
+    this.stmtCache.set('getEdgesWithValidFrom', this.db.prepare(
+      `SELECT id, from_id, to_id, type FROM edges WHERE valid_from IS NOT NULL AND type != 'indexes'`
+    ));
+    this.stmtCache.set('getAllEdges', this.db.prepare(
+      `SELECT id, from_id, to_id, type FROM edges`
+    ));
+    this.stmtCache.set('getUsesInputEdges', this.db.prepare(
+      `SELECT from_id, to_id FROM edges WHERE type = 'uses_input'`
+    ));
+  }
+
+  beginTransaction() {
+    this.db.exec('BEGIN TRANSACTION');
+  }
+
+  commitTransaction() {
+    this.db.exec('COMMIT');
+  }
+
+  rollbackTransaction() {
+    this.db.exec('ROLLBACK');
+  }
+
+  runInTransaction<T>(fn: () => T): T {
+    try {
+      this.beginTransaction();
+      const result = fn();
+      this.commitTransaction();
+      return result;
+    } catch (e) {
+      this.rollbackTransaction();
+      throw e;
+    }
+  }
+
+  insertNode(node: { id: string; type: string; label: string; file_path?: string; line_number?: number; content_hash?: string; created_at?: string }) {
+    this.stmtCache.get('insertNode').run(node.id, node.type, node.label, node.file_path || null, node.line_number || null, node.content_hash || null, node.created_at || null);
   }
 
   insertEdge(edge: { from_id: string; to_id: string; type: string; confidence?: string }) {
-    const stmt = this.db.prepare(
-      `INSERT OR IGNORE INTO edges (from_id, to_id, type, confidence)
-       VALUES (?, ?, ?, ?)`
-    );
-    stmt.run(edge.from_id, edge.to_id, edge.type, edge.confidence || "auto");
+    this.stmtCache.get('insertEdge').run(edge.from_id, edge.to_id, edge.type, edge.confidence || "auto");
   }
 
   insertAnnotation(ann: { node_id: string; key: string; value: string }) {
-    const stmt = this.db.prepare(
-      `INSERT INTO annotations (node_id, key, value) VALUES (?, ?, ?)`
-    );
-    stmt.run(ann.node_id, ann.key, ann.value);
+    this.stmtCache.get('insertAnnotation').run(ann.node_id, ann.key, ann.value);
   }
 
   insertConcept(concept: { node_id: string; kind: string; name: string; file_path?: string; line_number?: number; snippet?: string }) {
-    const stmt = this.db.prepare(
-      `INSERT OR IGNORE INTO concepts (node_id, kind, name, file_path, line_number, snippet)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    );
-    stmt.run(concept.node_id, concept.kind, concept.name, concept.file_path || null, concept.line_number || null, concept.snippet || null);
+    this.stmtCache.get('insertConcept').run(concept.node_id, concept.kind, concept.name, concept.file_path || null, concept.line_number || null, concept.snippet || null);
+  }
+
+  insertNodesBatch(nodes: { id: string; type: string; label: string; file_path?: string; line_number?: number; content_hash?: string; created_at?: string }[]) {
+    const stmt = this.stmtCache.get('insertNode');
+    for (const node of nodes) {
+      stmt.run(node.id, node.type, node.label, node.file_path || null, node.line_number || null, node.content_hash || null, node.created_at || null);
+    }
+  }
+
+  insertEdgesBatch(edges: { from_id: string; to_id: string; type: string; confidence?: string }[]) {
+    const stmt = this.stmtCache.get('insertEdge');
+    for (const edge of edges) {
+      stmt.run(edge.from_id, edge.to_id, edge.type, edge.confidence || "auto");
+    }
+  }
+
+  insertConceptsBatch(concepts: { node_id: string; kind: string; name: string; file_path?: string; line_number?: number; snippet?: string }[]) {
+    const stmt = this.stmtCache.get('insertConcept');
+    for (const concept of concepts) {
+      stmt.run(concept.node_id, concept.kind, concept.name, concept.file_path || null, concept.line_number || null, concept.snippet || null);
+    }
   }
 
   searchConcepts(term: string, kindFilter?: string): any[] {
@@ -158,26 +255,37 @@ export class GraphDB {
   }
 
   getNodeById(id: string): any | null {
-    return this.db.query("SELECT * FROM nodes WHERE id = ?").get(id) as any | null;
+    return this.stmtCache.get('getNodeById').get(id) as any | null;
   }
 
   deleteEdgesFromNode(fromId: string) {
-    this.db.exec(`DELETE FROM edges WHERE from_id = '${fromId.replace(/'/g, "''")}'`);
+    this.stmtCache.get('deleteEdgesFromNode').run(fromId);
   }
 
   deleteNode(id: string) {
-    const safeId = id.replace(/'/g, "''");
-    this.db.exec(`DELETE FROM nodes WHERE id = '${safeId}'`);
-    this.db.exec(`DELETE FROM edges WHERE from_id = '${safeId}'`);
-    this.db.exec(`DELETE FROM annotations WHERE node_id = '${safeId}'`);
+    this.stmtCache.get('deleteNode').run(id);
+    this.stmtCache.get('deleteEdges').run(id);
+    this.stmtCache.get('deleteAnnotations').run(id);
   }
 
   getAllNodes(): any[] {
-    return this.db.query("SELECT * FROM nodes").all();
+    return this.stmtCache.get('getAllNodes').all();
+  }
+
+  getAllNodesMinimal(): { id: string; content_hash: string | null }[] {
+    return this.stmtCache.get('getAllNodesMinimal').all();
   }
 
   getAllEdges(): any[] {
-    return this.db.query("SELECT * FROM edges").all();
+    return this.stmtCache.get('getAllEdges').all();
+  }
+
+  getUsesInputEdges(): { from_id: string; to_id: string }[] {
+    return this.stmtCache.get('getUsesInputEdges').all();
+  }
+
+  getEdgesWithValidFrom(): { id: number; from_id: string; to_id: string; type: string }[] {
+    return this.stmtCache.get('getEdgesWithValidFrom').all();
   }
 
   getAnnotationsForNode(nodeId: string): any[] {

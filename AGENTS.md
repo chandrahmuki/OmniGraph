@@ -122,6 +122,21 @@ When working in this repo, prefer these skills over ad-hoc approaches:
 - **/project-map** — Regenerate the compact NixOS config project map. Use when user asks to "map the project", "update the project map", or when new modules are added.
 - **/snapshot** — Create structured session snapshots to `memory/sessions/`. Use for important decisions, fixes, new modules. NOT for minor changes.
 
+## Session-resume command (exact steps)
+
+```bash
+# 1. Find latest session
+LATEST=$(ls -t memory/sessions/ | head -1)
+
+# 2. Read summary to get modified files
+cat memory/sessions/$LATEST/summary.md
+
+# 3. For each file in "Files Modified" section, run:
+bun run omnigraph.ts check <file-path>
+```
+
+**Important:** Always use `bun run omnigraph.ts <command>` — never prefix with other tools.
+
 ## Golden path for a non-trivial change
 
 1. Read relevant extractor code + skim existing patterns

@@ -15,3 +15,7 @@
 - [help](sessions/2026-05-09_help/)
 - [test-save-command-demo](sessions/2026-05-09_test-save-command-demo/)
 - [refactor-code-cleanup-top-level-imports-extract-bu](sessions/2026-05-09_refactor-code-cleanup-top-level-imports-extract-bu/)
+
+## 2026-05-10
+
+- [feat-cross-file-call-graph-imports-tracking-called](sessions/2026-05-10_feat-cross-file-call-graph-imports-tracking-called/)
