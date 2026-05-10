@@ -18,7 +18,8 @@
           
           installPhase = ''
             mkdir -p $out/share/omnigraph
-            cp omnigraph.ts $out/share/omnigraph/
+            # Remove the shebang line and let bun handle it
+            tail -n +2 omnigraph.ts > $out/share/omnigraph/omnigraph.ts
             cp package.json $out/share/omnigraph/
             
             # Copy node_modules if exists
