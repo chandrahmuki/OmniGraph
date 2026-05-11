@@ -20,6 +20,8 @@ import { ExportCommand } from "./commands/export-command.ts";
 import { AnalyticsCommand } from "./commands/analytics-command.ts";
 import { SummarizeCommand } from "./commands/summarize-command.ts";
 import { GitLogCommand } from "./commands/git-log-command.ts";
+import { LessonsCommand } from "./commands/lessons-command.ts";
+import { HotspotsCommand } from "./commands/hotspots-command.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
@@ -256,7 +258,7 @@ async function main() {
       const sessionsDir = path.join(projectPath, "memory/sessions");
       const snapshotDir = path.join(sessionsDir, snapshotTopic);
 
-      ensureDir(snapshotDir);
+      fs.mkdirSync(snapshotDir, { recursive: true });
 
       const summaryPath = path.join(snapshotDir, "summary.md");
       const now = new Date().toISOString();
@@ -332,101 +334,16 @@ Topic: ${topic}
     }
 
     case "embed": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-
-      const subcommand = args[1];
-
-      switch (subcommand) {
-        case "build": {
-          const db = new GraphDB(dbPath);
-          console.log("Building embeddings...");
-          const result = db.embedAndStore();
-          console.log(`✓ Embedded ${result.embedded} nodes (${result.failed} failed)`);
-          db.close();
-          break;
-        }
-
-        case "query": {
-          const queryArgs = args.slice(2).filter(a => !a.startsWith("--"));
-          const query = queryArgs.join(" ");
-          if (!query) {
-            console.log("Usage: omnigraph embed query <search-query>");
-            process.exit(1);
-          }
-          const topArg = args.find(a => a.startsWith("--top="));
-          const top = topArg ? parseInt(topArg.split("=")[1], 10) : 10;
-          const typeArg = args.find(a => a.startsWith("--type="));
-          const typeFilter = typeArg ? typeArg.split("=")[1] : undefined;
-
-          const db = new GraphDB(dbPath);
-          const results = db.semanticSearch(query, top, typeFilter);
-          
-          console.log(`\n## Semantic Search: "${query}"\n`);
-          if (results.length === 0) {
-            console.log("No results found.");
-          } else {
-            for (const r of results) {
-              const score = (r.score * 100).toFixed(1);
-              console.log(`${score.padEnd(6, " ")}% ${r.node?.label || r.node_id} (${r.node?.type || "?"})`);
-            }
-          }
-          db.close();
-          break;
-        }
-
-        default: {
-          console.log("Usage: omnigraph embed <build|query> [options]");
-          console.log("\nCommands:");
-          console.log("  build              Generate embeddings for all nodes");
-          console.log("  query <text>       Semantic search");
-          console.log("\nOptions:");
-          console.log("  --top=N            Number of results (default: 10)");
-          console.log("  --type=<type>      Filter by node type");
-          process.exit(1);
-        }
-      }
+      console.log("⚠️  Embeddings not yet implemented");
+      console.log("This feature will use SQLite FTS5 for semantic search");
+      console.log("Track progress in memory/sessions/ or issues/");
       break;
     }
 
     case "ask": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-
-      const query = args.slice(1).join(" ");
-      if (!query) {
-        console.log("Usage: omnigraph ask <question>");
-        console.log("\nExample: omnigraph ask 'Where is auth handled?'");
-        process.exit(1);
-      }
-
-      const db = new GraphDB(dbPath);
-      const results = db.semanticSearch(query, 5);
-      
-      console.log(`\n## Answer: "${query}"\n`);
-      
-      if (results.length === 0) {
-        console.log("No relevant nodes found. Try building embeddings first: omnigraph embed build");
-      } else {
-        console.log("**Relevant context:**\n");
-        for (const r of results) {
-          const score = (r.score * 100).toFixed(1);
-          console.log(`- ${r.node?.label || r.node_id} (${r.node?.type || "?"}) — ${score}% match`);
-          if (r.node?.file_path) {
-            console.log(`  File: ${r.node.file_path}`);
-          }
-        }
-        console.log("\n**Next steps:**");
-        console.log("- Use 'omnigraph check <file>' to see dependencies");
-        console.log("- Use 'omnigraph backlinks <file>' to see reverse dependencies");
-        console.log("- Use 'omnigraph impact <file>' to see full blast radius");
-      }
-      
-      db.close();
+      console.log("⚠️  Ask not yet implemented");
+      console.log("This feature will use embeddings + semantic search");
+      console.log("Track progress in memory/sessions/ or issues/");
       break;
     }
 
@@ -843,156 +760,12 @@ curl -X POST http://localhost:${port}/api/ask -d '{"question":"Where is auth?"}'
     }
 
     case "lessons": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-      const db = new GraphDB(dbPath);
-      const allNodes = db.getAllNodes();
-      const allEdges = db.getAllEdges();
-      const annotationsByNode = db.getAllAnnotations();
-
-      const lessonItems = allNodes.filter((n: any) => n.type === "lesson_item");
-      const moduleFilter = args.find(a => a.startsWith("--module="));
-      const isRecent = args.includes("--recent") || args.includes("-r");
-      const isAll = args.includes("--all") || args.includes("-a");
-
-      let filtered = lessonItems;
-      if (moduleFilter) {
-        const modPath = moduleFilter.replace("--module=", "");
-        const applicableIds = new Set(
-          allEdges.filter(e => e.type === "lesson_applies_to" && e.to_id === modPath).map(e => e.from_id)
-        );
-        filtered = filtered.filter((n: any) => applicableIds.has(n.id));
-      }
-
-      if (isRecent) {
-        filtered.sort((a: any, b: any) => {
-          const dateA = a.created_at || "0000";
-          const dateB = b.created_at || "0000";
-          return dateB.localeCompare(dateA);
-        });
-        filtered = filtered.slice(0, 15);
-      }
-
-      console.log(`\n## Lesson Items (${filtered.length}${moduleFilter ? ` for ${moduleFilter.replace("--module=", "")}` : ""})\n`);
-      for (const li of filtered) {
-        const tags = (annotationsByNode.get(li.id) || [])
-          .filter(a => a.key === "tag")
-          .map(a => a.value);
-        const date = li.created_at || "";
-        const tagStr = tags.length ? ` [${tags.join(", ")}]` : "";
-        const modules = allEdges
-          .filter(e => e.from_id === li.id && e.type === "lesson_applies_to")
-          .map(e => e.to_id);
-        const modStr = modules.length ? ` → ${modules.join(", ")}` : "";
-        console.log(`  ${date ? `[${date}] ` : ""}${li.label}${tagStr}${modStr}`);
-      }
-
-      db.close();
+      await new LessonsCommand().run(projectPath, dbPath, args.slice(1), {});
       break;
     }
 
     case "hotspots": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-      const db = new GraphDB(dbPath);
-      const allEdges = db.getAllEdges();
-      const allNodes = db.getAllNodes();
-      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
-      const annotationsByNode = db.getAllAnnotations();
-
-      const sessionModCount = new Map<string, number>();
-      const sessionModSessions = new Map<string, string[]>();
-      for (const e of allEdges) {
-        if (e.type === "session_modified") {
-          sessionModCount.set(e.to_id, (sessionModCount.get(e.to_id) || 0) + 1);
-          if (!sessionModSessions.has(e.to_id)) sessionModSessions.set(e.to_id, []);
-          sessionModSessions.get(e.to_id)!.push(e.from_id);
-        }
-      }
-
-      const lessonApplyCount = new Map<string, number>();
-      const lessonApplyLessons = new Map<string, string[]>();
-      for (const e of allEdges) {
-        if (e.type === "lesson_applies_to") {
-          lessonApplyCount.set(e.to_id, (lessonApplyCount.get(e.to_id) || 0) + 1);
-          if (!lessonApplyLessons.has(e.to_id)) lessonApplyLessons.set(e.to_id, []);
-          lessonApplyLessons.get(e.to_id)!.push(e.from_id);
-        }
-      }
-
-      const allTargets = new Set([...sessionModCount.keys(), ...lessonApplyCount.keys()]);
-      const sorted = [...allTargets].sort((a, b) => {
-        const scoreA = (sessionModCount.get(a) || 0) * 2 + (lessonApplyCount.get(a) || 0);
-        const scoreB = (sessionModCount.get(b) || 0) * 2 + (lessonApplyCount.get(b) || 0);
-        return scoreB - scoreA;
-      });
-
-      console.log("\n## Hotspots\n");
-      const errorPattern = /\b(crash|failure|broken|segfault|panic|OOM|unreachable|fatal)\b/i;
-
-      for (const target of sorted.slice(0, 15)) {
-        const sCount = sessionModCount.get(target) || 0;
-        const lCount = lessonApplyCount.get(target) || 0;
-        if (sCount === 0 && lCount === 0) continue;
-
-        const node = nodeMap.get(target);
-        const label = node ? node.label : target;
-        console.log(`### ${label} (${target})`);
-        console.log(`  Sessions: ${sCount} | Lessons: ${lCount}`);
-
-        if (sCount > 0) {
-          const sessions = sessionModSessions.get(target) || [];
-          console.log(`  Sessions: ${sessions.slice(-3).join(", ")}`);
-        }
-
-        const relatedErrors = allEdges
-          .filter(e => e.to_id === target && e.type === "caused")
-          .map(e => e.from_id);
-
-        const errorLessons = (lessonApplyLessons.get(target) || [])
-          .filter(lId => {
-            const items = allEdges.filter(e => e.from_id === lId && e.type === "lesson_contains").map(e => e.to_id);
-            return items.some(itemId => {
-              const itemNode = nodeMap.get(itemId);
-              return itemNode && errorPattern.test(itemNode.label);
-            });
-          });
-
-        if (errorLessons.length > 0) {
-          console.log(`  Error-related lessons: ${errorLessons.join(", ")}`);
-        }
-
-        const errorItems = allEdges
-          .filter(e => e.to_id === target && e.type === "lesson_applies_to")
-          .map(e => e.from_id)
-          .flatMap(lessonId =>
-            allEdges.filter(e => e.from_id === lessonId && e.type === "lesson_contains").map(e => e.to_id)
-          )
-          .filter(itemId => {
-            const itemNode = nodeMap.get(itemId);
-            return itemNode && itemNode.type === "lesson_item" && errorPattern.test(itemNode.label);
-          })
-          .map(itemId => {
-            const itemNode = nodeMap.get(itemId);
-            const tags = (annotationsByNode.get(itemId) || []).filter(a => a.key === "tag").map(a => a.value);
-            return `${itemNode.label}${tags.length ? ` [${tags.join(", ")}]` : ""}`;
-          });
-
-        if (errorItems.length > 0) {
-          console.log(`  Recurring issues:`);
-          for (const err of [...new Set(errorItems)].slice(0, 5)) {
-            console.log(`    - ${err}`);
-          }
-        }
-
-        console.log("");
-      }
-
-      db.close();
+      await new HotspotsCommand().run(projectPath, dbPath, args.slice(1), {});
       break;
     }
 
