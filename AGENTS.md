@@ -10,9 +10,9 @@ Scans a project directory, extracts dependencies/concepts/memory, stores them in
 **Runtime:** Bun only — uses `bun:sqlite`, `Bun.CryptoHasher`, `import.meta.dirname`. Will NOT work with Node.
 **Entry point:** `omnigraph.ts` — CLI dispatcher with all subcommands.
 
-**Usage:** `omnigraph <command>` (after symlink setup)
+**Usage:** `omnigraph <command>` — always use the system command (installed via Nix/symlink).
 
-**Dev mode:** If `omnigraph` command is not found or outdated, use `bun run omnigraph.ts <command>` for testing new features, then update system version with `flake update omnigraph && nos`.
+**Dev mode:** Only use `bun run omnigraph.ts <command>` for testing new features before they're merged. Then update system version with `flake update omnigraph && nos`.
 
 ## Architecture map
 

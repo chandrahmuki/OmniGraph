@@ -27,3 +27,4 @@
 
 - [refactor-session-resume-and-sessions-commands-use-](sessions/2026-05-11_refactor-session-resume-and-sessions-commands-use-/)
 - [agents-search-commands](sessions/2026-05-11_agents-search-commands/)
+- [fix-nix-build-broken-symlinks-exclude-omnigraph-an](sessions/2026-05-11_fix-nix-build-broken-symlinks-exclude-omnigraph-an/)
