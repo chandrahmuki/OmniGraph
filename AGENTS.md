@@ -10,6 +10,10 @@ Scans a project directory, extracts dependencies/concepts/memory, stores them in
 **Runtime:** Bun only — uses `bun:sqlite`, `Bun.CryptoHasher`, `import.meta.dirname`. Will NOT work with Node.
 **Entry point:** `omnigraph.ts` — CLI dispatcher with all subcommands.
 
+**Usage:** `omnigraph <command>` (after symlink setup)
+
+**Dev mode:** If `omnigraph` command is not found or outdated, use `bun run omnigraph.ts <command>` for testing new features, then update system version with `flake update omnigraph && nos`.
+
 ## Architecture map
 
 | Path | Responsibility |
@@ -73,23 +77,24 @@ All extractors return `{ nodes: ExtractedNode[], edges: ExtractedEdge[], concept
 ## Build, test, and local workflow
 
 ```bash
-bun run omnigraph.ts build              # scan → build DB → generate HTML
-bun run omnigraph.ts build --incremental # skip unchanged files
-bun run omnigraph.ts query <term>       # search nodes/annotations
-bun run omnigraph.ts search <term>      # search concepts (--kind=function|class|struct)
-bun run omnigraph.ts check <file>       # pre-edit impact analysis
-bun run omnigraph.ts impact <file>      # transitive reverse deps (BFS)
-bun run omnigraph.ts path <a> <b>       # shortest path BFS
-bun run omnigraph.ts orphans            # unused inputs, isolated files, dead refs
-bun run omnigraph.ts lessons            # list lesson items (--recent, --module=)
-bun run omnigraph.ts hotspots           # most-modified files + error patterns
-bun run omnigraph.ts errors             # errors with fix/workaround status (--unresolved, --file=)
-bun run omnigraph.ts issues             # issues with resolution status (--unresolved, --file=)
-bun run omnigraph.ts decisions          # decisions with rationale (--file=)
-bun run omnigraph.ts changes            # changes with type filter (--type=, --file=)
-bun run omnigraph.ts timeline <file>    # chronological events for a file
-bun run omnigraph.ts semantic <q>       # BM25 semantic search (--type=, --top=)
-bun run omnigraph.ts git-log            # recent commits with files
+omnigraph build              # scan → build DB → generate HTML
+omnigraph build --incremental # skip unchanged files
+omnigraph query <term>       # search nodes/annotations
+omnigraph search <term>      # search concepts (--kind=function|class|struct)
+omnigraph check <file>       # pre-edit impact analysis
+omnigraph impact <file>      # transitive reverse deps (BFS)
+omnigraph path <a> <b>       # shortest path BFS
+omnigraph orphans            # unused inputs, isolated files, dead refs
+omnigraph lessons            # list lesson items (--recent, --module=)
+omnigraph hotspots           # most-modified files + error patterns
+omnigraph errors             # errors with fix/workaround status (--unresolved, --file=)
+omnigraph issues             # issues with resolution status (--unresolved, --file=)
+omnigraph decisions          # decisions with rationale (--file=)
+omnigraph changes            # changes with type filter (--type=, --file=)
+omnigraph timeline <file>    # chronological events for a file
+omnigraph semantic <q>       # BM25 semantic search (--type=, --top=)
+omnigraph git-log            # recent commits with files
+omnigraph session-resume     # resume last session — shows modified files + context
 ```
 
 **Dev shell:** `shell.nix` provides bun, chromium, python3, typescript.
@@ -122,29 +127,22 @@ When working in this repo, prefer these skills over ad-hoc approaches:
 - **/project-map** — Regenerate the compact NixOS config project map. Use when user asks to "map the project", "update the project map", or when new modules are added.
 - **/snapshot** — Create structured session snapshots to `memory/sessions/`. Use for important decisions, fixes, new modules. NOT for minor changes.
 
-## Session-resume command (exact steps)
+## Session-resume command
 
 ```bash
-# 1. Find latest session
-LATEST=$(ls -t memory/sessions/ | head -1)
-
-# 2. Read summary to get modified files
-cat memory/sessions/$LATEST/summary.md
-
-# 3. For each file in "Files Modified" section, run:
-bun run omnigraph.ts check <file-path>
+omnigraph session-resume
 ```
 
-**Important:** Always use `bun run omnigraph.ts <command>` — never prefix with other tools.
+**Output:** Shows latest session topic, files modified, and context check (dependents count, sessions, errors) for each modified file.
 
 ## Golden path for a non-trivial change
 
 1. Read relevant extractor code + skim existing patterns
 2. Plan the change (what nodes/edges/annotations to add)
 3. Implement the narrowest change that works
-4. Run `bun run omnigraph.ts build` to verify
-5. Run `bun run omnigraph.ts check <affected-file>` to verify impact
-6. Run `bun run test` if test project exists
+4. Run `omnigraph build` to verify
+5. Run `omnigraph check <affected-file>` to verify impact
+6. Run `omnigraph test` if test project exists
 7. If user-visible: update README.md and docs
 
 ## Where to look first
@@ -163,6 +161,18 @@ bun run omnigraph.ts check <file-path>
 | "How are sessions tracked?" | `extractors/memory.ts` — session summary parsing, edge creation |
 | "Why is my file not being scanned?" | `omnigraph.jsonc` — `scan_dirs`, `ignore_dirs`, `extensions` |
 | "How do I add a new language?" | `extractors/generic.ts` — add to `LANGUAGES` array with patterns |
+
+## Search commands — use these directly
+
+**NEVER use grep/find/rg for code search** — use omnigraph commands instead:
+
+| Search need | Command |
+|-------------|---------|
+| Find nodes/annotations | `omnigraph query <term>` |
+| Find functions/classes | `omnigraph search <term> --kind=function` |
+| Semantic search | `omnigraph semantic <query>` |
+| Find references | `omnigraph impact <file>` |
+| Find paths | `omnigraph path <a> <b>` |
 
 ## Things to know about the maintainer's preferences
 

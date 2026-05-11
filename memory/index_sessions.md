@@ -7,6 +7,7 @@
 | 2026-05-09 | workaround-detection | Distinguish fix vs workaround (replaced, removed, switched) — workaround_by edges, resolution_type annotation |
 | 2026-05-09 | semantic-search | BM25 semantic search — zero-dependency ranking with stemming, type filtering |
 | 2026-05-06 | confidence-symlink-graph | Symlink walkDir fix, confidence labels, graph visualization |
+| 2026-05-11 | agents-search-commands | Added search commands reference table to AGENTS.md — query, search, semantic, impact, path |
 
 ## 2026-05-09
 
@@ -21,3 +22,8 @@
 - [feat-cross-file-call-graph-imports-tracking-called](sessions/2026-05-10_feat-cross-file-call-graph-imports-tracking-called/)
 - [perf-40x-faster-build-sqlite-pragma-prepared-state](sessions/2026-05-10_perf-40x-faster-build-sqlite-pragma-prepared-state/)
 - [feat-nixos-flake-installation-complete](sessions/2026-05-10_feat-nixos-flake-installation-complete/)
+
+## 2026-05-11
+
+- [refactor-session-resume-and-sessions-commands-use-](sessions/2026-05-11_refactor-session-resume-and-sessions-commands-use-/)
+- [agents-search-commands](sessions/2026-05-11_agents-search-commands/)
