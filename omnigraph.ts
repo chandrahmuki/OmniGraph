@@ -9,6 +9,7 @@ import { OrphansCommand } from "./commands/orphans-command.ts";
 import { QueryCommand } from "./commands/query-command.ts";
 import { SearchCommand } from "./commands/search-command.ts";
 import { SessionResumeCommand } from "./commands/session-resume-command.ts";
+import { SessionsCommand } from "./commands/sessions-command.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
@@ -1422,52 +1423,10 @@ curl -X POST http://localhost:${port}/api/ask -d '{"question":"Where is auth?"}'
     }
 
     case "sessions": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-      const db = new GraphDB(dbPath);
-      const allNodes = db.getAllNodes();
-      const allEdges = db.getAllEdges();
-
-      const sessions = allNodes.filter((n: any) => n.type === "session");
       const isRecent = args.includes("--recent") || args.includes("-r");
       const dateFilter = args.find(a => a.startsWith("--date="));
-
-      let filtered = sessions;
-      if (dateFilter) {
-        const date = dateFilter.replace("--date=", "");
-        filtered = sessions.filter((n: any) => n.created_at?.startsWith(date));
-      }
-
-      if (isRecent) {
-        filtered.sort((a: any, b: any) => {
-          const dateA = a.created_at || "0000";
-          const dateB = b.created_at || "0000";
-          return dateB.localeCompare(dateA);
-        });
-        filtered = filtered.slice(0, 10);
-      }
-
-      filtered.sort((a: any, b: any) => {
-        const dateA = a.created_at || "0000";
-        const dateB = b.created_at || "0000";
-        return dateB.localeCompare(dateA);
-      });
-
-      console.log(`\n## Sessions (${filtered.length})\n`);
-      for (const s of filtered) {
-        const modifiedFiles = allEdges.filter(e => e.from_id === s.id && e.type === "session_modified").map(e => e.to_id);
-        console.log(`  [${s.created_at || "unknown"}] ${s.label} (${modifiedFiles.length} files)`);
-        for (const f of modifiedFiles.slice(0, 5)) {
-          console.log(`    - ${f}`);
-        }
-        if (modifiedFiles.length > 5) {
-          console.log(`    ... and ${modifiedFiles.length - 5} more`);
-        }
-      }
-
-      db.close();
+      const date = dateFilter ? dateFilter.replace("--date=", "") : undefined;
+      await new SessionsCommand().run(projectPath, dbPath, args, { recent: isRecent, date });
       break;
     }
 
