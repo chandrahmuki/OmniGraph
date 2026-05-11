@@ -20,7 +20,7 @@
           installPhase = ''
             mkdir -p $out/share/omnigraph
             cp -r . $out/share/omnigraph
-            rm -rf $out/share/omnigraph/.omnigraph
+            rm -rf $out/share/omnigraph/.omnigraph $out/share/omnigraph/result
             # Remove the shebang from omnigraph.ts
             tail -n +2 $out/share/omnigraph/omnigraph.ts > $out/share/omnigraph/omnigraph.tmp.ts
             mv $out/share/omnigraph/omnigraph.tmp.ts $out/share/omnigraph/omnigraph.ts
