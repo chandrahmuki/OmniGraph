@@ -1555,12 +1555,23 @@ curl -X POST http://localhost:${port}/api/ask -d '{"question":"Where is auth?"}'
           inFilesSection = false;
         }
         if (inFilesSection && line.startsWith("- ")) {
-          const pathMatch = line.match(/(?:`([^`]+)`|([\w/.-]+\.\w+))/);
-          if (pathMatch) {
-            const p = (pathMatch[1] || pathMatch[2]).trim();
-            if (p && (p.includes("/") || p.endsWith(".ts") || p.endsWith(".nix") || p.endsWith(".py") || p.endsWith(".rs") || p.endsWith(".go") || p.endsWith(".js"))) {
-              filesModified.add(p);
+          let p: string | null = null;
+          const backtickMatch = line.match(/`([^`]+)`/);
+          if (backtickMatch) {
+            p = backtickMatch[1].trim();
+          } else {
+            const timestampMatch = line.match(/\]\s*(.+)$/);
+            if (timestampMatch) {
+              p = timestampMatch[1].trim();
+            } else {
+              const pathMatch = line.match(/([\w/.-]+\.\w+)/);
+              if (pathMatch) {
+                p = pathMatch[1].trim();
+              }
             }
+          }
+          if (p && (p.includes("/") || p.endsWith(".ts") || p.endsWith(".nix") || p.endsWith(".py") || p.endsWith(".rs") || p.endsWith(".go") || p.endsWith(".js"))) {
+            filesModified.add(p);
           }
         }
       }
