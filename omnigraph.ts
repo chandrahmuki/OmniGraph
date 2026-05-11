@@ -4,6 +4,10 @@ import { GraphDB } from "./db.ts";
 import { scanAndExtract } from "./extract.ts";
 import { buildHtml } from "./web/build.ts";
 import { buildIndex } from "./extractors/semantic.ts";
+import { CleanupCommand } from "./commands/cleanup-command.ts";
+import { OrphansCommand } from "./commands/orphans-command.ts";
+import { QueryCommand } from "./commands/query-command.ts";
+import { SearchCommand } from "./commands/search-command.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
@@ -304,50 +308,14 @@ Topic: ${topic}
     }
 
     case "query": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-      const db = new GraphDB(dbPath);
-      const term = args[1]?.toLowerCase();
-      if (!term) {
-        console.log("Usage: omnigraph query <search>");
-        db.close();
-        return;
-      }
+      await new QueryCommand().run(projectPath, dbPath, args.slice(1), {});
+      break;
+    }
 
-      const nodes = db.getAllNodes().filter(n =>
-        n.label.toLowerCase().includes(term) ||
-        n.id.toLowerCase().includes(term)
-      );
-
-      const annotationsByNode = db.getAllAnnotations();
-      const matchingAnnotations: { node_id: string; key: string; value: string }[] = [];
-      for (const [nodeId, anns] of annotationsByNode) {
-        for (const ann of anns) {
-          if (ann.value.toLowerCase().includes(term) || ann.key.toLowerCase().includes(term)) {
-            matchingAnnotations.push({ node_id: nodeId, key: ann.key, value: ann.value });
-          }
-        }
-      }
-
-      console.log(`\nFound ${nodes.length} node(s):\n`);
-      for (const n of nodes.slice(0, 20)) {
-        const date = n.created_at ? ` (${n.created_at})` : "";
-        console.log(`  [${n.type}] ${n.label}${date} (${n.id})`);
-      }
-      if (nodes.length > 20) console.log(`  ... and ${nodes.length - 20} more`);
-
-      if (matchingAnnotations.length > 0) {
-        console.log(`\nMatching tags/annotations (${matchingAnnotations.length}):\n`);
-        for (const ann of matchingAnnotations.slice(0, 20)) {
-          const node = db.getNodeById(ann.node_id);
-          const nodeLabel = node ? node.label : ann.node_id;
-          console.log(`  ${ann.key}=${ann.value} -> ${nodeLabel}`);
-        }
-      }
-
-      db.close();
+    case "search": {
+      const kindArg = args.find(a => a.startsWith("--kind="));
+      const kind = kindArg ? kindArg.split("=")[1] : undefined;
+      await new SearchCommand().run(projectPath, dbPath, args.slice(1), { kind });
       break;
     }
 
@@ -971,89 +939,13 @@ Topic: ${topic}
     }
 
     case "cleanup": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-
       const vacuum = args.includes("--vacuum");
-      const db = new GraphDB(dbPath);
-
-      console.log("\n## DB Cleanup\n");
-
-      const cleanup = db.cleanupDeadNodes(projectPath);
-      console.log(`Removed ${cleanup.removed} dead references`);
-      console.log(`Removed ${cleanup.orphans} orphan nodes\n`);
-
-      const staleEdges = db.cleanupStaleEdges();
-      console.log(`Removed ${staleEdges} stale edges\n`);
-
-      if (vacuum) {
-        console.log("Vacuuming database...");
-        db.vacuum();
-        console.log("✓ Database optimized\n");
-      }
-
-      const stats = db.count();
-      console.log(`Final: ${stats.nodes} nodes, ${stats.edges} edges`);
-
-      db.close();
+      await new CleanupCommand().run(projectPath, dbPath, args.slice(1), { vacuum });
       break;
     }
 
     case "orphans": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-      const db = new GraphDB(dbPath);
-      const allNodes = db.getAllNodes();
-      const allEdges = db.getAllEdges();
-
-      const nodeIds = new Set(allNodes.map((n: any) => n.id));
-      const fromIds = new Set(allEdges.map((e: any) => e.from_id));
-      const toIds = new Set(allEdges.map((e: any) => e.to_id));
-
-      const orphans = allNodes.filter((n: any) => !fromIds.has(n.id) && !toIds.has(n.id));
-      const unusedInputs = allNodes.filter((n: any) => n.type === "input" && !toIds.has(n.id));
-      const deadRefs = allNodes.filter((n: any) => {
-        if (n.type !== "file" || !n.file_path) return false;
-        const fullPath = path.join(projectPath, n.file_path);
-        return !fs.existsSync(fullPath);
-      });
-
-      console.log("\n## Orphan Analysis\n");
-
-      if (orphans.length > 0) {
-        console.log(`### Isolated nodes (${orphans.length}):`);
-        for (const o of orphans.slice(0, 20)) {
-          console.log(`  ${o.id} (${o.type})`);
-        }
-        if (orphans.length > 20) console.log(`  ... and ${orphans.length - 20} more`);
-        console.log();
-      }
-
-      if (unusedInputs.length > 0) {
-        console.log(`### Unused inputs (${unusedInputs.length}):`);
-        for (const i of unusedInputs) {
-          console.log(`  ${i.id}`);
-        }
-        console.log();
-      }
-
-      if (deadRefs.length > 0) {
-        console.log(`### Dead references (${deadRefs.length}):`);
-        for (const d of deadRefs) {
-          console.log(`  ${d.id} — file not found: ${d.file_path}`);
-        }
-        console.log();
-      }
-
-      if (orphans.length === 0 && unusedInputs.length === 0 && deadRefs.length === 0) {
-        console.log("✓ No orphans found!");
-      }
-
-      db.close();
+      await new OrphansCommand().run(projectPath, dbPath);
       break;
     }
 
