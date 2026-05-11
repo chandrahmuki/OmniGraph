@@ -29,3 +29,4 @@
 - [agents-search-commands](sessions/2026-05-11_agents-search-commands/)
 - [fix-nix-build-broken-symlinks-exclude-omnigraph-an](sessions/2026-05-11_fix-nix-build-broken-symlinks-exclude-omnigraph-an/)
 - [doc-clarify-system-command-usage-in-agents-md](sessions/2026-05-11_doc-clarify-system-command-usage-in-agents-md/)
+- [refactor-db-cleanup-centralized-methods-cleanup-co](sessions/2026-05-11_refactor-db-cleanup-centralized-methods-cleanup-co/)
