@@ -14,6 +14,12 @@ import { CheckCommand } from "./commands/check-command.ts";
 import { ImpactCommand } from "./commands/impact-command.ts";
 import { PathCommand } from "./commands/path-command.ts";
 import { BacklinksCommand } from "./commands/backlinks-command.ts";
+import { SnapshotCommand } from "./commands/snapshot-command.ts";
+import { DiffCommand } from "./commands/diff-command.ts";
+import { ExportCommand } from "./commands/export-command.ts";
+import { AnalyticsCommand } from "./commands/analytics-command.ts";
+import { SummarizeCommand } from "./commands/summarize-command.ts";
+import { GitLogCommand } from "./commands/git-log-command.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
@@ -448,265 +454,22 @@ Topic: ${topic}
     }
 
     case "snapshot": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-
       const subcommand = args[1];
       const name = args[2];
-
-      switch (subcommand) {
-        case "create": {
-          if (!name) {
-            console.log("Usage: omnigraph snapshot create <name>");
-            process.exit(1);
-          }
-          const db = new GraphDB(dbPath);
-          const result = db.createSnapshot(name);
-          console.log(`✓ Snapshot created: ${name}`);
-          console.log(`  ID: ${result.id}`);
-          console.log(`  Nodes: ${result.nodes}`);
-          console.log(`  Edges: ${result.edges}`);
-          db.close();
-          break;
-        }
-
-        case "list": {
-          const db = new GraphDB(dbPath);
-          const snapshots = db.listSnapshots();
-          if (snapshots.length === 0) {
-            console.log("No snapshots found.");
-          } else {
-            console.log("\n## Snapshots\n");
-            console.log("| ID | Name | Created | Nodes | Edges |");
-            console.log("|----|------|---------|-------|-------|");
-            for (const s of snapshots) {
-              console.log(`| ${s.id} | ${s.name} | ${s.created_at.split("T")[0]} | ${s.nodes} | ${s.edges} |`);
-            }
-          }
-          db.close();
-          break;
-        }
-
-        case "delete": {
-          if (!name) {
-            console.log("Usage: omnigraph snapshot delete <name>");
-            process.exit(1);
-          }
-          const db = new GraphDB(dbPath);
-          const deleted = db.deleteSnapshot(name);
-          if (deleted) {
-            console.log(`✓ Snapshot deleted: ${name}`);
-          } else {
-            console.error(`Snapshot not found: ${name}`);
-          }
-          db.close();
-          break;
-        }
-
-        default: {
-          console.log("Usage: omnigraph snapshot <create|list|delete> [name]");
-          process.exit(1);
-        }
-      }
+      await new SnapshotCommand().run(projectPath, dbPath, [subcommand, name].filter(Boolean), {});
       break;
     }
 
     case "diff": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-
-      const snapshot1 = args[1];
-      const snapshot2 = args[2];
       const asJson = args.includes("--json");
-
-      if (!snapshot1) {
-        console.log("Usage: omnigraph diff <snapshot1> <snapshot2> [--json]");
-        console.log("       omnigraph diff --last (compare current vs last build)");
-        process.exit(1);
-      }
-
-      const db = new GraphDB(dbPath);
-      let diffResult;
-
-      if (snapshot1 === "--last") {
-        const snapshots = db.listSnapshots();
-        if (snapshots.length < 1) {
-          console.error("No snapshots found. Create one with: omnigraph snapshot create <name>");
-          db.close();
-          process.exit(1);
-        }
-        const last = snapshots[0];
-        const currentHash = db.getCurrentGraphHash();
-        
-        const allNodes = db.getAllNodes();
-        const allEdges = db.getAllEdges();
-        const lastSnapshot = db.getSnapshot(last.name);
-        
-        if (!lastSnapshot) {
-          console.error("Failed to load snapshot");
-          db.close();
-          process.exit(1);
-        }
-
-        const nodeSet1 = new Set(lastSnapshot.nodes);
-        const edgeSet1 = new Set(lastSnapshot.edges);
-        const nodeSet2 = new Set(allNodes.map((n: any) => n.id));
-        const edgeSet2 = new Set(allEdges.map((e: any) => e.id));
-
-        const addedNodes = Array.from(nodeSet2).filter(id => !nodeSet1.has(id));
-        const removedNodes = Array.from(nodeSet1).filter(id => !nodeSet2.has(id));
-        const addedEdges = Array.from(edgeSet2).filter(id => !edgeSet1.has(id));
-        const removedEdges = Array.from(edgeSet1).filter(id => !edgeSet2.has(id));
-
-        diffResult = {
-          added_nodes: addedNodes,
-          removed_nodes: removedNodes,
-          added_edges: addedEdges,
-          removed_edges: removedEdges,
-          snapshot1: { name: last.name, created_at: last.created_at, nodes: last.nodes, edges: last.edges },
-          snapshot2: { name: "current", created_at: new Date().toISOString(), nodes: currentHash.nodes, edges: currentHash.edges }
-        };
-      } else {
-        diffResult = db.diffSnapshots(snapshot1, snapshot2);
-        if (!diffResult) {
-          console.error(`Snapshot not found: ${snapshot1} or ${snapshot2}`);
-          db.close();
-          process.exit(1);
-        }
-      }
-
-      if (asJson) {
-        console.log(JSON.stringify(diffResult, null, 2));
-      } else {
-        console.log("\n## Graph Diff\n");
-        console.log(`**From:** ${diffResult.snapshot1.name} (${diffResult.snapshot1.created_at.split("T")[0]}) — ${diffResult.snapshot1.nodes} nodes, ${diffResult.snapshot1.edges} edges`);
-        console.log(`**To:** ${diffResult.snapshot2.name} (${diffResult.snapshot2.created_at.split("T")[0]}) — ${diffResult.snapshot2.nodes} nodes, ${diffResult.snapshot2.edges} edges\n`);
-
-        console.log(`### Summary`);
-        console.log(`- Added nodes: ${diffResult.added_nodes.length}`);
-        console.log(`- Removed nodes: ${diffResult.removed_nodes.length}`);
-        console.log(`- Added edges: ${diffResult.added_edges.length}`);
-        console.log(`- Removed edges: ${diffResult.removed_edges.length}\n`);
-
-        if (diffResult.added_nodes.length > 0) {
-          console.log("### Added nodes:");
-          for (const id of diffResult.added_nodes.slice(0, 20)) {
-            console.log(`  + ${id}`);
-          }
-          if (diffResult.added_nodes.length > 20) {
-            console.log(`  ... and ${diffResult.added_nodes.length - 20} more`);
-          }
-          console.log();
-        }
-
-        if (diffResult.removed_nodes.length > 0) {
-          console.log("### Removed nodes:");
-          for (const id of diffResult.removed_nodes.slice(0, 20)) {
-            console.log(`  - ${id}`);
-          }
-          if (diffResult.removed_nodes.length > 20) {
-            console.log(`  ... and ${diffResult.removed_nodes.length - 20} more`);
-          }
-          console.log();
-        }
-
-        if (diffResult.added_edges.length > 0) {
-          console.log("### Added edges:");
-          for (const id of diffResult.added_edges.slice(0, 20)) {
-            console.log(`  + Edge #${id}`);
-          }
-          if (diffResult.added_edges.length > 20) {
-            console.log(`  ... and ${diffResult.added_edges.length - 20} more`);
-          }
-          console.log();
-        }
-
-        if (diffResult.removed_edges.length > 0) {
-          console.log("### Removed edges:");
-          for (const id of diffResult.removed_edges.slice(0, 20)) {
-            console.log(`  - Edge #${id}`);
-          }
-          if (diffResult.removed_edges.length > 20) {
-            console.log(`  ... and ${diffResult.removed_edges.length - 20} more`);
-          }
-          console.log();
-        }
-      }
-
-      db.close();
+      await new DiffCommand().run(projectPath, dbPath, args.slice(1), { asJson });
       break;
     }
 
     case "export": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-
-      const format = args[1];
-      const filterTypeArg = args.find(a => a.startsWith("--filter="));
-      const filterType = filterTypeArg ? filterTypeArg.split("=")[1] : undefined;
-      
-      const outputFile = args[2] && !args[2].startsWith("--") ? args[2] : null;
-
-      if (!format || !["json", "graphml", "gexf"].includes(format)) {
-        console.log("Usage: omnigraph export <json|graphml|gexf> [output-file] [--filter=<type>]");
-        console.log("\nFormats:");
-        console.log("  json     Raw JSON export (default: stdout)");
-        console.log("  graphml  GraphML format for Gephi");
-        console.log("  gexf     GEXF format for Cytoscape");
-        console.log("\nOptions:");
-        console.log("  --filter=<type>  Only export nodes of this type (e.g., file, function)");
-        process.exit(1);
-      }
-
-      const db = new GraphDB(dbPath);
-      let output: string;
-
-      switch (format) {
-        case "json": {
-          const data = db.exportJSON(filterType);
-          output = JSON.stringify(data, null, 2);
-          break;
-        }
-        case "graphml": {
-          if (filterType) {
-            console.error("Filter not supported for GraphML export");
-            db.close();
-            process.exit(1);
-          }
-          output = db.exportGraphML();
-          break;
-        }
-        case "gexf": {
-          if (filterType) {
-            console.error("Filter not supported for GEXF export");
-            db.close();
-            process.exit(1);
-          }
-          output = db.exportGEXF();
-          break;
-        }
-        default: {
-          db.close();
-          process.exit(1);
-        }
-      }
-
-      db.close();
-
-      if (outputFile) {
-        fs.writeFileSync(outputFile, output);
-        console.log(`✓ Exported to ${outputFile}`);
-        const stats = fs.statSync(outputFile);
-        console.log(`  Size: ${(stats.size / 1024).toFixed(2)} KB`);
-      } else {
-        console.log(output);
-      }
+      const filterArg = args.find(a => a.startsWith("--filter="));
+      const filter = filterArg ? filterArg.split("=")[1] : undefined;
+      await new ExportCommand().run(projectPath, dbPath, args.slice(1), { filter });
       break;
     }
 
@@ -753,102 +516,14 @@ Topic: ${topic}
     }
 
     case "summarize": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-
-      const target = args[1];
       const clustersOnly = args.includes("--clusters");
-
-      if (!target && !clustersOnly) {
-        console.log("Usage: omnigraph summarize <node-id> [--clusters]");
-        console.log("       omnigraph summarize --clusters  # Summarize all clusters");
-        process.exit(1);
-      }
-
-      const db = new GraphDB(dbPath);
-
-      if (clustersOnly) {
-        const analytics = db.computeAnalytics();
-        console.log("\n## Cluster Summaries\n");
-        for (const cluster of analytics.clusters) {
-          console.log(`### ${cluster.name}/ (${cluster.size} nodes)`);
-          console.log(`   Folder containing ${cluster.size} files and related entities\n`);
-        }
-        db.close();
-        break;
-      }
-
-      const result = db.generateSummary(target);
-      if (!result) {
-        console.log(`Node not found: ${target}`);
-        db.close();
-        process.exit(1);
-      }
-
-      console.log(`\n## Summary: ${target}\n`);
-      console.log(`${result.summary}\n`);
-      
-      if (result.clusters.length > 0) {
-        console.log(`**Clusters:** ${result.clusters.join(', ')}\n`);
-      }
-
-      if (result.context.length > 0) {
-        console.log(`**Context:**`);
-        for (const ctx of result.context) {
-          console.log(`- ${ctx}`);
-        }
-        console.log();
-      }
-
-      db.close();
+      await new SummarizeCommand().run(projectPath, dbPath, args.slice(1), { clustersOnly });
       break;
     }
 
     case "analytics": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-
       const asJson = args.includes("--json");
-      const db = new GraphDB(dbPath);
-      const analytics = db.computeAnalytics();
-      db.close();
-
-      if (asJson) {
-        console.log(JSON.stringify(analytics, null, 2));
-      } else {
-        console.log("\n## Graph Analytics\n");
-        console.log(`**Total:** ${analytics.total_nodes} nodes, ${analytics.total_edges} edges`);
-        console.log(`**Density:** ${(analytics.density * 100).toFixed(4)}%`);
-        console.log(`**Avg Degree:** ${analytics.avg_degree}\n`);
-
-        console.log("### Nodes by Type:");
-        for (const [type, count] of Object.entries(analytics.by_type).slice(0, 10)) {
-          console.log(`  ${type}: ${count}`);
-        }
-
-        console.log("\n### Edges by Type:");
-        for (const [type, count] of Object.entries(analytics.by_edge_type).slice(0, 10)) {
-          console.log(`  ${type}: ${count}`);
-        }
-
-        console.log("\n### Hub Nodes (Top 10):");
-        for (const hub of analytics.hub_nodes) {
-          console.log(`  ${hub.id}: ${hub.degree} connections`);
-        }
-
-        console.log("\n### Clusters (Top 10):");
-        for (const cluster of analytics.clusters) {
-          console.log(`  ${cluster.name}/: ${cluster.size} nodes`);
-        }
-
-        if (analytics.isolated_nodes > 0) {
-          console.log(`\n⚠️  ${analytics.isolated_nodes} isolated nodes found`);
-        }
-      }
+      await new AnalyticsCommand().run(projectPath, dbPath, args.slice(1), { asJson });
       break;
     }
 
@@ -1150,40 +825,7 @@ curl -X POST http://localhost:${port}/api/ask -d '{"question":"Where is auth?"}'
     }
 
     case "git-log": {
-      const count = parseInt(args[1] || "10", 10);
-      console.log(`\n## Recent ${count} commits (files modified)\n`);
-      try {
-        const logOutput = execSync(
-          `git log --oneline --name-only -n ${count} --pretty=format:"%h %s"`,
-          { cwd: projectPath, encoding: "utf-8" }
-        );
-        const lines = logOutput.split("\n");
-        let currentCommit = "";
-        let commitFiles: string[] = [];
-        for (const line of lines) {
-          const commitMatch = line.match(/^([a-f0-9]{7,})\s+(.+)/);
-          if (commitMatch) {
-            if (currentCommit && commitFiles.length > 0) {
-              console.log(`  ${currentCommit}`);
-              for (const f of commitFiles) {
-                if (f.trim()) console.log(`    - ${f.trim()}`);
-              }
-            }
-            currentCommit = commitMatch[0];
-            commitFiles = [];
-          } else if (line.trim()) {
-            commitFiles.push(line.trim());
-          }
-        }
-        if (currentCommit && commitFiles.length > 0) {
-          console.log(`  ${currentCommit}`);
-          for (const f of commitFiles) {
-            if (f.trim()) console.log(`    - ${f.trim()}`);
-          }
-        }
-      } catch (e) {
-        console.error("Failed to run git log:", (e as Error).message);
-      }
+      await new GitLogCommand().run(projectPath, dbPath);
       break;
     }
 
