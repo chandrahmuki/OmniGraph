@@ -20,3 +20,4 @@
 
 - [feat-cross-file-call-graph-imports-tracking-called](sessions/2026-05-10_feat-cross-file-call-graph-imports-tracking-called/)
 - [perf-40x-faster-build-sqlite-pragma-prepared-state](sessions/2026-05-10_perf-40x-faster-build-sqlite-pragma-prepared-state/)
+- [feat-nixos-flake-installation-complete](sessions/2026-05-10_feat-nixos-flake-installation-complete/)
