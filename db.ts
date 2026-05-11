@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import path from "node:path";
 
 export interface Node {
   id: string;
@@ -61,6 +62,7 @@ export class GraphDB {
       );
       CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
       CREATE INDEX IF NOT EXISTS idx_nodes_file ON nodes(file_path);
+      CREATE INDEX IF NOT EXISTS idx_nodes_created ON nodes(created_at);
 
       CREATE TABLE IF NOT EXISTS edges (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +79,7 @@ export class GraphDB {
       CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(type);
       CREATE INDEX IF NOT EXISTS idx_edges_from_type ON edges(from_id, type);
       CREATE INDEX IF NOT EXISTS idx_edges_to_type ON edges(to_id, type);
+      CREATE INDEX IF NOT EXISTS idx_edges_valid ON edges(valid_from, valid_until);
 
       CREATE TABLE IF NOT EXISTS annotations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,6 +109,7 @@ export class GraphDB {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA cache_size = -64000");
     this.db.exec("PRAGMA temp_store = MEMORY");
+    this.db.exec("PRAGMA busy_timeout = 5000");
 
     try {
       this.db.exec("ALTER TABLE nodes ADD COLUMN created_at TEXT");
@@ -350,6 +354,47 @@ export class GraphDB {
 
   clear() {
     this.db.exec("DELETE FROM nodes; DELETE FROM edges; DELETE FROM annotations; DELETE FROM concepts;");
+  }
+
+  cleanupDeadNodes(projectPath: string): { removed: number; orphans: number } {
+    const allNodes = this.getAllNodes();
+    const deadIds: string[] = [];
+    
+    for (const n of allNodes) {
+      if (n.type === "file" && n.file_path && !n.file_path.startsWith("inputs.")) {
+        const fullPath = join(projectPath, n.file_path);
+        if (!existsSync(fullPath)) {
+          deadIds.push(n.id);
+        }
+      }
+    }
+
+    if (deadIds.length === 0) {
+      return { removed: 0, orphans: 0 };
+    }
+
+    const deadList = deadIds.map(id => id.replace(/'/g, "''")).join("','");
+    this.db.exec(`DELETE FROM edges WHERE from_id IN ('${deadList}') OR to_id IN ('${deadList}')`);
+    this.db.exec(`DELETE FROM nodes WHERE id IN ('${deadList}')`);
+    
+    const orphansResult = this.db.exec(`
+      DELETE FROM nodes WHERE id NOT IN (
+        SELECT from_id FROM edges UNION SELECT to_id FROM edges
+      ) AND type NOT IN ('lesson', 'lesson_item', 'session')
+    `);
+    const orphans = orphansResult?.changes || 0;
+
+    return { removed: deadIds.length, orphans };
+  }
+
+  cleanupStaleEdges(): number {
+    const now = new Date().toISOString();
+    const result = this.db.exec(`DELETE FROM edges WHERE valid_until IS NOT NULL AND valid_until != '' AND valid_until < '${now}'`);
+    return result?.changes || 0;
+  }
+
+  vacuum(): void {
+    this.db.exec("VACUUM");
   }
 
   updateEdgeValidUntil(edgeId: number, validUntil: string) {

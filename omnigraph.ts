@@ -21,26 +21,6 @@ function ensureDir(path: string) {
   if (!fs.existsSync(path)) fs.mkdirSync(path, { recursive: true });
 }
 
-function cleanupDeadNodes(db: GraphDB, projectPath: string) {
-  const deadIds: string[] = [];
-  const allNodes = db.getAllNodes();
-  for (const n of allNodes) {
-    if (n.type === "file" && n.file_path && !n.file_path.startsWith("inputs.")) {
-      const fullPath = path.join(projectPath, n.file_path);
-      if (!fs.existsSync(fullPath)) {
-        deadIds.push(n.id);
-      }
-    }
-  }
-  if (deadIds.length > 0) {
-    const deadList = deadIds.map(id => `'${id.replace(/'/g, "''")}'`).join(",");
-    db.db.exec(`DELETE FROM edges WHERE from_id IN (${deadList}) OR to_id IN (${deadList})`);
-    db.db.exec(`DELETE FROM nodes WHERE id IN (${deadList})`);
-    db.db.exec(`DELETE FROM nodes WHERE id NOT IN (SELECT from_id FROM edges UNION SELECT to_id FROM edges)`);
-    console.log(`Removed ${deadIds.length} dead references: ${deadIds.join(", ")}`);
-  }
-}
-
 function jsonResponse(data: any, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
@@ -63,14 +43,11 @@ async function buildGraph(projectPath: string, dbPath: string, htmlPath: string,
   await scanAndExtract(projectPath, db, incremental);
 
   if (!incremental) {
-    db.db.exec(`
-      DELETE FROM nodes WHERE id NOT IN (
-        SELECT from_id FROM edges UNION SELECT to_id FROM edges
-      ) AND type NOT IN ('lesson', 'lesson_item');
-    `);
+    const cleanup = db.cleanupDeadNodes(projectPath);
+    if (cleanup.removed > 0 || cleanup.orphans > 0) {
+      console.log(`Cleanup: ${cleanup.removed} dead refs, ${cleanup.orphans} orphans removed`);
+    }
   }
-
-  cleanupDeadNodes(db, projectPath);
 
   const stats = db.count();
   console.log(`${stats.nodes} nodes, ${stats.edges} edges extracted`);
@@ -147,6 +124,8 @@ Commands:
   sessions       List all sessions from the graph
                    --recent       Show only recent sessions (last 10)
                    --date=<date>  Filter by date (YYYY-MM-DD)
+  cleanup        Remove dead nodes, orphans, and stale edges (run after manual file deletions)
+                   --vacuum       Also vacuum database to reclaim space
 
 Examples:
   omnigraph save "feat: workaround detection"
@@ -988,6 +967,37 @@ Topic: ${topic}
       } else {
         console.log(output);
       }
+      break;
+    }
+
+    case "cleanup": {
+      if (!fs.existsSync(dbPath)) {
+        console.error("DB not found. Run 'omnigraph build' first.");
+        process.exit(1);
+      }
+
+      const vacuum = args.includes("--vacuum");
+      const db = new GraphDB(dbPath);
+
+      console.log("\n## DB Cleanup\n");
+
+      const cleanup = db.cleanupDeadNodes(projectPath);
+      console.log(`Removed ${cleanup.removed} dead references`);
+      console.log(`Removed ${cleanup.orphans} orphan nodes\n`);
+
+      const staleEdges = db.cleanupStaleEdges();
+      console.log(`Removed ${staleEdges} stale edges\n`);
+
+      if (vacuum) {
+        console.log("Vacuuming database...");
+        db.vacuum();
+        console.log("✓ Database optimized\n");
+      }
+
+      const stats = db.count();
+      console.log(`Final: ${stats.nodes} nodes, ${stats.edges} edges`);
+
+      db.close();
       break;
     }
 
