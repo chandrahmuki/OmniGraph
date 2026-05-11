@@ -1514,101 +1514,61 @@ curl -X POST http://localhost:${port}/api/ask -d '{"question":"Where is auth?"}'
     }
 
     case "session-resume": {
-      const sessionsDir = path.join(projectPath, "memory/sessions");
-      if (!fs.existsSync(sessionsDir)) {
+      if (!fs.existsSync(dbPath)) {
+        console.log("DB not found. Run 'omnigraph build' first.");
+        break;
+      }
+
+      const db = new GraphDB(dbPath);
+      const allNodes = db.getAllNodes();
+      const allEdges = db.getAllEdges();
+
+      const sessions = allNodes.filter((n: any) => n.type === "session")
+        .sort((a: any, b: any) => {
+          const dateA = a.created_at || "0000";
+          const dateB = b.created_at || "0000";
+          return dateB.localeCompare(dateA);
+        });
+
+      if (sessions.length === 0) {
         console.log("No sessions found. Create a session with 'omnigraph save' first.");
+        db.close();
         break;
       }
 
-      const entries = fs.readdirSync(sessionsDir).map(entry => {
-        const summaryPath = path.join(sessionsDir, entry, "summary.md");
-        const mtime = fs.existsSync(summaryPath) ? fs.statSync(summaryPath).mtimeMs : 0;
-        return { entry, mtime };
-      }).sort((a, b) => b.mtime - a.mtime);
+      const latestSession = sessions[0];
+      const summaryPath = `memory/sessions/${latestSession.label}/summary.md`;
 
-      if (entries.length === 0) {
-        console.log("No sessions found.");
-        break;
-      }
+      console.log(`\n## Session Resume: ${latestSession.label}`);
+      console.log(`Generated: ${latestSession.created_at || "unknown"}\n`);
 
-      const latestSession = entries[0].entry;
-      const summaryPath = path.join(sessionsDir, latestSession, "summary.md");
-      if (!fs.existsSync(summaryPath)) {
-        console.log(`No summary found for session: ${latestSession}`);
-        break;
-      }
+      const modifiedFiles = allEdges
+        .filter(e => e.from_id === latestSession.id && e.type === "session_modified")
+        .map(e => e.to_id);
 
-      const content = fs.readFileSync(summaryPath, "utf-8");
-      const topicMatch = content.match(/^Topic:\s*(.+)$/m);
-      const genMatch = content.match(/^Generated:\s*(.+)$/m);
-      const topic = topicMatch ? topicMatch[1].trim() : latestSession;
-      const generated = genMatch ? genMatch[1].trim() : "unknown";
-
-      console.log(`\n## Session Resume: ${topic}`);
-      console.log(`Generated: ${generated}\n`);
-
-      const filesModified = new Set<string>();
-      let inFilesSection = false;
-      for (const line of content.split("\n")) {
-        if (/^## Files Modified$/i.test(line)) {
-          inFilesSection = true;
-          continue;
-        }
-        if (/^## /i.test(line) && inFilesSection) {
-          inFilesSection = false;
-        }
-        if (inFilesSection && line.startsWith("- ")) {
-          let p: string | null = null;
-          const backtickMatch = line.match(/`([^`]+)`/);
-          if (backtickMatch) {
-            p = backtickMatch[1].trim();
-          } else {
-            const timestampMatch = line.match(/\]\s*(.+)$/);
-            if (timestampMatch) {
-              p = timestampMatch[1].trim();
-            } else {
-              const pathMatch = line.match(/([\w/.-]+\.\w+)/);
-              if (pathMatch) {
-                p = pathMatch[1].trim();
-              }
-            }
-          }
-          if (p && (p.includes("/") || p.endsWith(".ts") || p.endsWith(".nix") || p.endsWith(".py") || p.endsWith(".rs") || p.endsWith(".go") || p.endsWith(".js"))) {
-            filesModified.add(p);
-          }
-        }
-      }
-
-      if (filesModified.size === 0) {
+      if (modifiedFiles.length === 0) {
         console.log("No files modified in this session.");
+        db.close();
         break;
       }
 
-      console.log(`## Files Modified (${filesModified.size})\n`);
-      for (const f of filesModified) {
+      console.log(`## Files Modified (${modifiedFiles.length})\n`);
+      for (const f of modifiedFiles) {
         console.log(`  - ${f}`);
       }
 
-      if (!fs.existsSync(dbPath)) {
-        console.log("\nDB not found. Run 'omnigraph build' first.");
-        break;
-      }
-
       console.log("\n## Context Check\n");
-      const db = new GraphDB(dbPath);
-      const allEdges = db.getAllEdges();
-      const allNodes = db.getAllNodes();
       const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
 
-      for (const target of filesModified) {
+      for (const target of modifiedFiles) {
         const usedBy = allEdges.filter(e => e.to_id === target && e.type !== "indexes").map(e => e.from_id);
-        const sessions = allEdges.filter(e => e.to_id === target && e.type === "session_modified").map(e => e.from_id);
+        const sessionCount = allEdges.filter(e => e.to_id === target && e.type === "session_modified").length;
         const errors = allEdges.filter(e => e.to_id === target && e.type === "affects")
           .map(e => e.from_id)
           .filter(id => { const n = nodeMap.get(id); return n && n.type === "error"; });
 
         const risk = usedBy.length > 3 || errors.length > 0 ? "HIGH" : usedBy.length > 0 ? "MEDIUM" : "LOW";
-        console.log(`${target}: ${usedBy.length} dependents, ${sessions.length} sessions, ${errors.length} errors [${risk}]`);
+        console.log(`${target}: ${usedBy.length} dependents, ${sessionCount} sessions, ${errors.length} errors [${risk}]`);
       }
 
       db.close();
