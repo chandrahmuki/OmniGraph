@@ -10,6 +10,10 @@ import { QueryCommand } from "./commands/query-command.ts";
 import { SearchCommand } from "./commands/search-command.ts";
 import { SessionResumeCommand } from "./commands/session-resume-command.ts";
 import { SessionsCommand } from "./commands/sessions-command.ts";
+import { CheckCommand } from "./commands/check-command.ts";
+import { ImpactCommand } from "./commands/impact-command.ts";
+import { PathCommand } from "./commands/path-command.ts";
+import { BacklinksCommand } from "./commands/backlinks-command.ts";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
@@ -421,259 +425,25 @@ Topic: ${topic}
     }
 
     case "check": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-      const target = args[1];
-      if (!target) {
-        console.log("Usage: omnigraph check <file-path>");
-        process.exit(1);
-      }
-      const db = new GraphDB(dbPath);
-      const allEdges = db.getAllEdges();
-      const allNodes = db.getAllNodes();
-      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
-
-      const node = allNodes.find((n: any) => n.id === target || n.file_path === target);
-      if (!node) {
-        console.log(`Node not found: ${target}`);
-        db.close();
-        process.exit(1);
-      }
-
-      console.log(`\n## Pre-edit Check: ${node.id}\n`);
-
-      const deps = allEdges.filter((e: any) => e.from_id === node.id);
-      const reverseDeps = allEdges.filter((e: any) => e.to_id === node.id && !e.from_id.startsWith("2026-"));
-
-      if (deps.length > 0) {
-        console.log(`### Uses (${deps.length}):`);
-        for (const e of deps.slice(0, 10)) {
-          const target = nodeMap.get(e.to_id);
-          console.log(`  → ${e.to_id} [${e.type}]${target ? ` (${target.type})` : ""}`);
-        }
-        if (deps.length > 10) console.log(`  ... and ${deps.length - 10} more`);
-        console.log();
-      }
-
-      if (reverseDeps.length > 0) {
-        console.log(`### Used by (${reverseDeps.length}):`);
-        for (const e of reverseDeps.slice(0, 10)) {
-          const source = nodeMap.get(e.from_id);
-          console.log(`  ← ${e.from_id} [${e.type}]${source ? ` (${source.type})` : ""}`);
-        }
-        if (reverseDeps.length > 10) console.log(`  ... and ${reverseDeps.length - 10} more`);
-        console.log();
-      }
-
-      const sessions = allEdges.filter((e: any) => e.from_id.startsWith("2026-") && e.to_id === node.id);
-      if (sessions.length > 0) {
-        console.log(`### Related sessions (${sessions.length}):`);
-        for (const e of sessions.slice(0, 5)) {
-          console.log(`  - ${e.from_id} [${e.type}]`);
-        }
-        console.log();
-      }
-
-      const risk = reverseDeps.length > 10 ? "HIGH" : reverseDeps.length > 3 ? "MEDIUM" : "LOW";
-      console.log(`⚠️  Risk: ${risk} (${reverseDeps.length} reverse deps)`);
-
-      db.close();
+      await new CheckCommand().run(projectPath, dbPath, args.slice(1));
       break;
     }
 
     case "impact": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-      const target = args[1];
-      if (!target) {
-        console.log("Usage: omnigraph impact <file-path>");
-        process.exit(1);
-      }
-      const db = new GraphDB(dbPath);
-      const allEdges = db.getAllEdges();
-      const allNodes = db.getAllNodes();
-      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
-
-      const visited = new Set<string>();
-      const queue = [target];
-      visited.add(target);
-      const layers: Map<number, string[]> = new Map();
-      let depth = 0;
-
-      while (queue.length > 0) {
-        const nextQueue: string[] = [];
-        const currentLayer: string[] = [];
-        for (const current of queue) {
-          currentLayer.push(current);
-          const reverseDeps = allEdges.filter((e: any) =>
-            e.to_id === current && !e.from_id.startsWith("2026-")
-          );
-          for (const edge of reverseDeps) {
-            if (!visited.has(edge.from_id)) {
-              visited.add(edge.from_id);
-              nextQueue.push(edge.from_id);
-            }
-          }
-        }
-        if (currentLayer.length > 0) {
-          layers.set(depth, currentLayer);
-        }
-        depth++;
-        queue.length = 0;
-        queue.push(...nextQueue);
-      }
-
-      console.log(`\n## Impact Analysis: ${target}\n`);
-      console.log(`Total affected: ${visited.size - 1} nodes (excluding source)\n`);
-
-      const directDeps = allEdges.filter((e: any) =>
-        e.to_id === target && !e.from_id.startsWith("2026-")
-      );
-      const directDepIds = [...new Set(directDeps.map((e: any) => e.from_id))];
-      if (directDepIds.length) {
-        console.log("### Direct dependents:");
-        for (const id of directDepIds) {
-          const node = nodeMap.get(id);
-          const edgeTypes = directDeps.filter((e: any) => e.from_id === id).map((e: any) => e.type);
-          console.log(`  ${id} [${[...new Set(edgeTypes)].join(",")}]${node ? ` (${node.type})` : ""}`);
-        }
-      }
-
-      for (let d = 1; d < depth; d++) {
-        const layer = layers.get(d);
-        if (layer && layer.length > 0) {
-          console.log(`\n### Depth ${d}:`);
-          for (const id of layer) {
-            const node = nodeMap.get(id);
-            console.log(`  ${id} (${node?.type || "?"})`);
-          }
-        }
-      }
-
-      db.close();
+      await new ImpactCommand().run(projectPath, dbPath, args.slice(1));
       break;
     }
 
     case "path": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-      const fromId = args[1];
-      const toId = args[2];
-      if (!fromId || !toId) {
-        console.log("Usage: omnigraph path <from-node> <to-node>");
-        process.exit(1);
-      }
-      const db = new GraphDB(dbPath);
-      const allEdges = db.getAllEdges();
-      const allNodes = db.getAllNodes();
-      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
-
-      const adjacency = new Map<string, string[]>();
-      for (const n of allNodes) {
-        adjacency.set(n.id, []);
-      }
-      for (const e of allEdges) {
-        const neighbors = adjacency.get(e.from_id) || [];
-        neighbors.push(e.to_id);
-        adjacency.set(e.from_id, neighbors);
-      }
-
-      const visited = new Set<string>();
-      const queue: { id: string; path: string[] }[] = [{ id: fromId, path: [fromId] }];
-      visited.add(fromId);
-      let found: string[] | null = null;
-
-      while (queue.length > 0) {
-        const current = queue.shift()!;
-        if (current.id === toId) {
-          found = current.path;
-          break;
-        }
-        const neighbors = adjacency.get(current.id) || [];
-        for (const neighbor of neighbors) {
-          if (!visited.has(neighbor)) {
-            visited.add(neighbor);
-            queue.push({ id: neighbor, path: [...current.path, neighbor] });
-          }
-        }
-      }
-
-      console.log(`\n## Path: ${fromId} → ${toId}\n`);
-      if (found) {
-        console.log(`Length: ${found.length - 1} hops\n`);
-        for (let i = 0; i < found.length; i++) {
-          const node = nodeMap.get(found[i]);
-          const prefix = i === 0 ? "●" : "→";
-          console.log(`  ${prefix} ${found[i]} (${node?.type || "?"})`);
-        }
-      } else {
-        console.log("No path found.");
-      }
-
-      db.close();
+      await new PathCommand().run(projectPath, dbPath, args.slice(1));
       break;
     }
 
     case "backlinks": {
-      if (!fs.existsSync(dbPath)) {
-        console.error("DB not found. Run 'omnigraph build' first.");
-        process.exit(1);
-      }
-      const target = args[1];
-      if (!target) {
-        console.log("Usage: omnigraph backlinks <file-path> [--depth=N] [--json]");
-        process.exit(1);
-      }
-
       const depthArg = args.find(a => a.startsWith("--depth="));
       const depth = depthArg ? parseInt(depthArg.split("=")[1], 10) : 1;
       const asJson = args.includes("--json");
-
-      const db = new GraphDB(dbPath);
-      const backlinks = db.getBacklinks(target, depth);
-      const allNodes = db.getAllNodes();
-      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
-
-      if (asJson) {
-        console.log(JSON.stringify({
-          target,
-          depth,
-          total: backlinks.length,
-          backlinks: backlinks.map(b => ({
-            id: b.id,
-            type: b.type,
-            edge_type: b.edge_type,
-            distance: b.distance,
-            label: nodeMap.get(b.id)?.label || b.id
-          }))
-        }, null, 2));
-      } else {
-        console.log(`\n## Backlinks: ${target}\n`);
-        console.log(`Total: ${backlinks.length} files depend on this\n`);
-
-        const byDistance = new Map<number, typeof backlinks>();
-        for (const b of backlinks) {
-          if (!byDistance.has(b.distance)) byDistance.set(b.distance, []);
-          byDistance.get(b.distance)!.push(b);
-        }
-
-        for (const [dist, links] of byDistance.entries()) {
-          console.log(`### Depth ${dist}:`);
-          for (const link of links) {
-            const node = nodeMap.get(link.id);
-            console.log(`  ${link.id} [${link.edge_type}] (${link.type})${node?.file_path ? ` — ${node.file_path}` : ""}`);
-          }
-          console.log();
-        }
-      }
-
-      db.close();
+      await new BacklinksCommand().run(projectPath, dbPath, args.slice(1), { depth, asJson });
       break;
     }
 
