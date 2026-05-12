@@ -49,3 +49,4 @@
 - [refactor-query-sessions-commands-use-db-helpers-se](sessions/2026-05-12_refactor-query-sessions-commands-use-db-helpers-se/)
 - [refactor-path-git-log-backlinks-commands-use-db-he](sessions/2026-05-12_refactor-path-git-log-backlinks-commands-use-db-he/)
 - [feat-error-handling-try-catch-blocks-in-check-path](sessions/2026-05-12_feat-error-handling-try-catch-blocks-in-check-path/)
+- [feat-vs-code-extension-initial-scaffolding-with-ch](sessions/2026-05-12_feat-vs-code-extension-initial-scaffolding-with-ch/)
