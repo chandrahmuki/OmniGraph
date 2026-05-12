@@ -38,6 +38,51 @@ export interface Concept {
   snippet?: string;
 }
 
+interface NodeResult {
+  id: string;
+  type: string;
+  label: string;
+  file_path?: string;
+  created_at?: string;
+}
+
+interface EdgeResult {
+  id?: number;
+  from_id: string;
+  to_id: string;
+  type: string;
+  confidence?: string;
+}
+
+interface BacklinkResult {
+  id: string;
+  type: string;
+  edge_type: string;
+  distance: number;
+}
+
+interface TimelineEvent {
+  date: string;
+  type: string;
+  label: string;
+  node_id: string;
+  metadata: string;
+}
+
+interface HotspotResult {
+  target: string;
+  session_count: number;
+  lesson_count: number;
+  sessions: string[];
+  lessons: string[];
+}
+
+interface OrphanResult {
+  orphans: NodeResult[];
+  unusedInputs: NodeResult[];
+  deadRefs: NodeResult[];
+}
+
 export class GraphDB {
   db: Database;
   private stmtCache: Map<string, any> = new Map();
@@ -1205,51 +1250,6 @@ export class GraphDB {
 
     return items;
   }
-
-interface NodeResult {
-  id: string;
-  type: string;
-  label: string;
-  file_path?: string;
-  created_at?: string;
-}
-
-interface EdgeResult {
-  id?: number;
-  from_id: string;
-  to_id: string;
-  type: string;
-  confidence?: string;
-}
-
-interface BacklinkResult {
-  id: string;
-  type: string;
-  edge_type: string;
-  distance: number;
-}
-
-interface TimelineEvent {
-  date: string;
-  type: string;
-  label: string;
-  node_id: string;
-  metadata: string;
-}
-
-interface HotspotResult {
-  target: string;
-  session_count: number;
-  lesson_count: number;
-  sessions: string[];
-  lessons: string[];
-}
-
-interface OrphanResult {
-  orphans: NodeResult[];
-  unusedInputs: NodeResult[];
-  deadRefs: NodeResult[];
-}
 
   getOrphans(projectPath: string): OrphanResult {
     const allNodes = this.getAllNodes();
