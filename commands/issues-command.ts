@@ -19,15 +19,15 @@ export class IssuesCommand {
 
     let issues = db.db.prepare(`
       SELECT n.id, n.label, n.file_path, n.created_at,
-             (SELECT GROUP_CONCAT(s.id)
+             (SELECT GROUP_CONCAT(DISTINCT s.id)
               FROM edges e
               JOIN nodes s ON e.from_id = s.id
               WHERE e.to_id = n.id AND e.type = 'detected_issue') as sessions,
-             (SELECT GROUP_CONCAT(c.label)
+             (SELECT GROUP_CONCAT(DISTINCT c.label)
               FROM edges e
               JOIN nodes c ON e.to_id = n.id
               WHERE e.from_id = c.id AND e.type = 'resolves') as resolved_by,
-             (SELECT GROUP_CONCAT(c.label)
+             (SELECT GROUP_CONCAT(DISTINCT c.label)
               FROM edges e
               JOIN nodes c ON e.to_id = n.id
               WHERE e.from_id = c.id AND e.type = 'workaround_for') as workaround_by

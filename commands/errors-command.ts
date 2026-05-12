@@ -19,15 +19,15 @@ export class ErrorsCommand {
 
     let errors = db.db.prepare(`
       SELECT e.id, e.label, e.file_path,
-             (SELECT GROUP_CONCAT(f.label || ' [' || f.file_path || ']')
+             (SELECT GROUP_CONCAT(DISTINCT f.label || ' [' || f.file_path || ']')
               FROM edges er
               JOIN nodes f ON er.to_id = f.id
               WHERE er.from_id = e.id AND er.type = 'resolved_by') as fixes,
-             (SELECT GROUP_CONCAT(w.label || ' [' || w.file_path || ']')
+             (SELECT GROUP_CONCAT(DISTINCT w.label || ' [' || w.file_path || ']')
               FROM edges er
               JOIN nodes w ON er.to_id = w.id
               WHERE er.from_id = e.id AND er.type = 'workaround_by') as workarounds,
-             (SELECT GROUP_CONCAT(s.id)
+             (SELECT GROUP_CONCAT(DISTINCT s.id)
               FROM edges de
               JOIN nodes s ON de.from_id = s.id
               WHERE de.to_id = e.id AND de.type = 'detected_error') as sessions

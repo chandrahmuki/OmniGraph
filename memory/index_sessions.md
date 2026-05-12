@@ -32,3 +32,4 @@
 - [refactor-db-cleanup-centralized-methods-cleanup-co](sessions/2026-05-11_refactor-db-cleanup-centralized-methods-cleanup-co/)
 - [docs-add-technical-guidelines-and-code-organizatio](sessions/2026-05-11_docs-add-technical-guidelines-and-code-organizatio/)
 - [refactor-extract-16-command-classes-omnigraph-ts-r](sessions/2026-05-11_refactor-extract-16-command-classes-omnigraph-ts-r/)
+- [refactor-complete-25-command-classes-extracted-omn](sessions/2026-05-11_refactor-complete-25-command-classes-extracted-omn/)
