@@ -48,3 +48,4 @@
 - [refactor-errors-lessons-orphans-commands-use-db-he](sessions/2026-05-12_refactor-errors-lessons-orphans-commands-use-db-he/)
 - [refactor-query-sessions-commands-use-db-helpers-se](sessions/2026-05-12_refactor-query-sessions-commands-use-db-helpers-se/)
 - [refactor-path-git-log-backlinks-commands-use-db-he](sessions/2026-05-12_refactor-path-git-log-backlinks-commands-use-db-he/)
+- [feat-error-handling-try-catch-blocks-in-check-path](sessions/2026-05-12_feat-error-handling-try-catch-blocks-in-check-path/)
