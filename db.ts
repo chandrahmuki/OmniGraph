@@ -1045,6 +1045,103 @@ export class GraphDB {
     return results;
   }
 
+  getIssues(fileFilter?: string, unresolvedOnly?: boolean) {
+    let query = `
+      SELECT n.id, n.label, n.file_path, n.created_at,
+             (SELECT GROUP_CONCAT(DISTINCT s.id)
+              FROM edges e
+              JOIN nodes s ON e.from_id = s.id
+              WHERE e.to_id = n.id AND e.type = 'detected_issue') as sessions,
+             (SELECT GROUP_CONCAT(DISTINCT c.label)
+              FROM edges e
+              JOIN nodes c ON e.to_id = n.id
+              WHERE e.from_id = c.id AND e.type = 'resolves') as resolved_by,
+             (SELECT GROUP_CONCAT(DISTINCT c.label)
+              FROM edges e
+              JOIN nodes c ON e.to_id = n.id
+              WHERE e.from_id = c.id AND e.type = 'workaround_for') as workaround_by
+      FROM nodes n
+      WHERE n.type = 'issue'
+    `;
+
+    if (fileFilter) {
+      query += ` AND n.id IN (
+        SELECT e.from_id FROM edges e WHERE e.to_id = ? AND e.type = 'affects'
+      )`;
+    }
+
+    query += ` ORDER BY n.created_at`;
+
+    const issues = fileFilter 
+      ? this.db.prepare(query).all(fileFilter) as any[]
+      : this.db.prepare(query).all() as any[];
+
+    if (unresolvedOnly) {
+      return issues.filter(i => !i.resolved_by && !i.workaround_by);
+    }
+
+    return issues;
+  }
+
+  getDecisions(fileFilter?: string) {
+    let query = `
+      SELECT n.id, n.label, n.file_path, n.created_at,
+             (SELECT GROUP_CONCAT(s.id)
+              FROM edges e
+              JOIN nodes s ON e.from_id = s.id
+              WHERE e.to_id = n.id AND e.type = 'made_decision') as sessions
+      FROM nodes n
+      WHERE n.type = 'decision'
+    `;
+
+    if (fileFilter) {
+      query += ` AND n.id IN (
+        SELECT e.from_id FROM edges e WHERE e.to_id = ? AND e.type = 'applies_to'
+      )`;
+    }
+
+    query += ` ORDER BY n.created_at`;
+
+    return fileFilter
+      ? this.db.prepare(query).all(fileFilter) as any[]
+      : this.db.prepare(query).all() as any[];
+  }
+
+  getChanges(fileFilter?: string, typeFilter?: string) {
+    let query = `
+      SELECT n.id, n.label, n.file_path, n.created_at,
+             (SELECT GROUP_CONCAT(s.id)
+              FROM edges e
+              JOIN nodes s ON e.from_id = s.id
+              WHERE e.to_id = n.id AND e.type = 'recorded_change') as recorded_in
+      FROM nodes n
+      WHERE n.type = 'change'
+    `;
+
+    if (fileFilter) {
+      query += ` AND n.id IN (
+        SELECT e.from_id FROM edges e WHERE e.to_id = ? AND e.type = 'affects'
+      )`;
+    }
+
+    query += ` ORDER BY n.created_at`;
+
+    let changes = fileFilter
+      ? this.db.prepare(query).all(fileFilter) as any[]
+      : this.db.prepare(query).all() as any[];
+
+    if (typeFilter) {
+      const annotations = this.getAllAnnotations();
+      changes = changes.filter(c => {
+        const anns = annotations.get(c.id) || [];
+        const changeType = anns.find(a => a.key === "change_type");
+        return changeType && changeType.value === typeFilter;
+      });
+    }
+
+    return changes;
+  }
+
   getCurrentGraphHash(): { nodes_hash: string; edges_hash: string; nodes: number; edges: number } {
     const allNodes = this.getAllNodes();
     const allEdges = this.getAllEdges();

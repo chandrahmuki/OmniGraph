@@ -43,3 +43,4 @@
 - [fix-hotspots-command-import-db-ts-not-db-js](sessions/2026-05-12_fix-hotspots-command-import-db-ts-not-db-js/)
 - [fix-standardize-imports-db-ts-not-db-js-across-all](sessions/2026-05-12_fix-standardize-imports-db-ts-not-db-js-across-all/)
 - [refactor-timeline-command-use-getfiletimeline-db-h](sessions/2026-05-12_refactor-timeline-command-use-getfiletimeline-db-h/)
+- [refactor-hotspots-command-use-gethotspots-db-helpe](sessions/2026-05-12_refactor-hotspots-command-use-gethotspots-db-helpe/)

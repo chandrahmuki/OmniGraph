@@ -1,58 +1,33 @@
 import { GraphDB } from "../db.ts";
 
 export class ChangesCommand {
-  async run(
-    projectPath: string,
-    dbPath: string,
-    args: string[],
-    _options: {}
-  ): Promise<void> {
-    if (!this.checkDB(dbPath)) return;
+  name = "changes";
+  description = "List changes recorded in sessions and git";
 
-    const db = new GraphDB(dbPath);
-    const allEdges = db.getAllEdges();
-    const allNodes = db.getAllNodes();
-    const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
-    const annotationsByNode = db.getAllAnnotations();
+  async run(projectPath: string, dbPath: string, args: string[]): Promise<void> {
+    if (!Bun.file(dbPath).exists) {
+      console.error("DB not found. Run 'omnigraph build' first.");
+      process.exit(1);
+    }
 
     const fileFilter = args.find(a => a.startsWith("--file="))?.replace("--file=", "");
     const typeFilter = args.find(a => a.startsWith("--type="))?.replace("--type=", "");
 
-    let changes = db.db.prepare(`
-      SELECT n.id, n.label, n.file_path, n.created_at,
-             (SELECT GROUP_CONCAT(s.id)
-              FROM edges e
-              JOIN nodes s ON e.from_id = s.id
-              WHERE e.to_id = n.id AND e.type = 'recorded_change') as recorded_in
-      FROM nodes n
-      WHERE n.type = 'change'
-      ORDER BY n.created_at
-    `).all() as any[];
+    const db = new GraphDB(dbPath);
+    const changes = db.getChanges(fileFilter, typeFilter);
+    const allEdges = db.getAllEdges();
+    const nodeMap = new Map(db.getAllNodes().map((n: any) => [n.id, n]));
+    const annotationsByNode = db.getAllAnnotations();
 
-    if (fileFilter) {
-      const affectedChangeIds = allEdges
-        .filter(e => e.to_id === fileFilter && e.type === "affects")
-        .map(e => e.from_id);
-      changes = changes.filter(c => affectedChangeIds.includes(c.id));
-    }
-
-    if (typeFilter) {
-      changes = changes.filter(c => {
-        const anns = annotationsByNode.get(c.id) || [];
-        const changeType = anns.find(a => a.key === "change_type");
-        return changeType && changeType.value === typeFilter;
-      });
-    }
-
+    let header = "";
     if (fileFilter && typeFilter) {
-      console.log(`\n## Changes affecting ${fileFilter} (type: ${typeFilter}) (${changes.length})\n`);
+      header = ` affecting ${fileFilter} (type: ${typeFilter})`;
     } else if (fileFilter) {
-      console.log(`\n## Changes affecting ${fileFilter} (${changes.length})\n`);
+      header = ` affecting ${fileFilter}`;
     } else if (typeFilter) {
-      console.log(`\n## Changes (type: ${typeFilter}) (${changes.length})\n`);
-    } else {
-      console.log(`\n## Changes (${changes.length})\n`);
+      header = ` (type: ${typeFilter})`;
     }
+    console.log(`\n## Changes${header} (${changes.length})\n`);
 
     if (!changes.length) {
       console.log("No changes found.");
@@ -108,13 +83,5 @@ export class ChangesCommand {
     }
 
     db.close();
-  }
-
-  private checkDB(dbPath: string): boolean {
-    if (!Bun.file(dbPath).exists) {
-      console.error("DB not found. Run 'omnigraph build' first.");
-      process.exit(1);
-    }
-    return true;
   }
 }
