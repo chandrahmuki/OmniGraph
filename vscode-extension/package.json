@@ -1,0 +1,94 @@
+{
+  "name": "omnigraph",
+  "displayName": "OmniGraph",
+  "description": "Interactive knowledge graph for your codebase — dependencies, impact analysis, and AI chat",
+  "version": "0.1.0",
+  "publisher": "omnigraph",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:omnigraph.showGraph",
+    "onCommand:omnigraph.checkFile",
+    "onCommand:omnigraph.impactAnalysis",
+    "onCommand:omnigraph.searchCodebase"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "omnigraph.showGraph",
+        "title": "OmniGraph: Show Dependency Graph",
+        "category": "OmniGraph"
+      },
+      {
+        "command": "omnigraph.checkFile",
+        "title": "OmniGraph: Pre-edit Check",
+        "category": "OmniGraph"
+      },
+      {
+        "command": "omnigraph.impactAnalysis",
+        "title": "OmniGraph: Impact Analysis",
+        "category": "OmniGraph"
+      },
+      {
+        "command": "omnigraph.searchCodebase",
+        "title": "OmniGraph: Search Codebase",
+        "category": "OmniGraph"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "omnigraph.checkFile",
+          "group": "omnigraph@1",
+          "when": "resourceScheme == file"
+        },
+        {
+          "command": "omnigraph.impactAnalysis",
+          "group": "omnigraph@2",
+          "when": "resourceScheme == file"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "omnigraph-sidebar",
+          "title": "OmniGraph",
+          "icon": "$(graph)"
+        }
+      ]
+    },
+    "views": {
+      "omnigraph-sidebar": [
+        {
+          "id": "omnigraph-search",
+          "name": "Search",
+          "type": "tree"
+        },
+        {
+          "id": "omnigraph-recent",
+          "name": "Recent Files",
+          "type": "tree"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}
