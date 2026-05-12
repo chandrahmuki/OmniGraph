@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { OmniGraphService } from './omnigraphService';
 
 export class GraphPanel {
   public static currentPanel: GraphPanel | undefined;
@@ -42,80 +43,337 @@ export class GraphPanel {
 
     this.panel.webview.html = this.getHtmlForWebview();
     this.panel.onDidDispose(() => this.dispose(), null, this._disposables);
+
+    // Handle messages from webview
+    this.panel.webview.onDidReceiveMessage(
+      async (message) => {
+        switch (message.command) {
+          case 'loadGraph': {
+            const omnigraphService = new OmniGraphService();
+            const data = await omnigraphService.getGraphData();
+            this.panel.webview.postMessage({ command: 'graphData', data });
+            break;
+          }
+          case 'refresh': {
+            const omnigraphService = new OmniGraphService();
+            const data = await omnigraphService.getGraphData();
+            this.panel.webview.postMessage({ command: 'graphData', data });
+            break;
+          }
+          case 'nodeClick': {
+            const node = message.node;
+            this.panel.webview.postMessage({ 
+              command: 'nodeInfo', 
+              data: {
+                label: node.label,
+                id: node.id,
+                type: node.type,
+                file_path: node.file_path,
+                deps: 0,
+                dependents: 0
+              }
+            });
+            break;
+          }
+        }
+      },
+      undefined,
+      this._disposables
+    );
   }
 
   private getHtmlForWebview(): string {
+    const d3Uri = this.panel.webview.asWebviewUri(
+      vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'd3', 'dist', 'd3.min.js')
+    );
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OmniGraph</title>
+  <script src="${d3Uri}"></script>
   <style>
     body { 
       margin: 0; 
-      padding: 20px; 
+      padding: 0; 
       font-family: var(--vscode-font-family);
       background: var(--vscode-editor-background);
+      overflow: hidden;
     }
-    .container { text-align: center; padding: 40px; }
-    h1 { color: var(--vscode-foreground); }
+    #graph-container {
+      width: 100vw;
+      height: 100vh;
+    }
+    .controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 100;
+      background: var(--vscode-editor-background);
+      padding: 10px;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
     .btn {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
       border: none;
-      padding: 12px 24px;
+      padding: 8px 16px;
       border-radius: 4px;
       cursor: pointer;
-      font-size: 14px;
-      margin: 10px;
+      font-size: 13px;
+      margin: 4px;
     }
     .btn:hover { opacity: 0.9; }
-    .info { 
-      margin-top: 30px; 
-      color: var(--vscode-descriptionForeground);
-      max-width: 600px;
-      margin-left: auto;
-      margin-right: auto;
+    .search-box {
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border);
+      padding: 8px;
+      border-radius: 4px;
+      width: 250px;
+      margin: 4px;
     }
+    .node-info {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      right: 10px;
+      background: var(--vscode-editor-background);
+      padding: 15px;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      display: none;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .node-info h3 { margin: 0 0 10px 0; color: var(--vscode-foreground); }
+    .node-info .detail { margin: 5px 0; color: var(--vscode-descriptionForeground); }
+    .loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: var(--vscode-foreground);
+    }
+    .spinner {
+      border: 3px solid var(--vscode-progressBar-background);
+      border-top: 3px solid var(--vscode-button-background);
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>🕸️ OmniGraph Dependency Graph</h1>
-    
-    <p>Interactive visualization of your codebase dependencies</p>
-    
-    <button class="btn" onclick="openGraph()">Open Full Graph</button>
+  <div id="graph-container"></div>
+  
+  <div class="controls">
+    <input type="text" class="search-box" id="search" placeholder="Search nodes..." />
+    <button class="btn" onclick="zoomIn()">+</button>
+    <button class="btn" onclick="zoomOut()">−</button>
+    <button class="btn" onclick="resetZoom()">Reset</button>
     <button class="btn" onclick="refreshGraph()">Refresh</button>
-    
-    <div class="info">
-      <h3>Quick Actions</h3>
-      <ul style="text-align: left;">
-        <li><strong>Right-click a file</strong> → "OmniGraph: Pre-edit Check"</li>
-        <li><strong>Right-click a file</strong> → "OmniGraph: Impact Analysis"</li>
-        <li><strong>Command Palette</strong> → "OmniGraph: Search Codebase"</li>
-      </ul>
-    </div>
+  </div>
+  
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div>Loading graph...</div>
+  </div>
+  
+  <div class="node-info" id="nodeInfo">
+    <h3 id="nodeTitle"></h3>
+    <div id="nodeDetails"></div>
   </div>
 
   <script>
     const vscode = acquireVsCodeApi();
+    let svg, simulation, nodes = [], links = [];
+    let zoom = d3.zoom().on('zoom', (e) => svg.select('g').attr('transform', e.transform));
     
-    function openGraph() {
-      vscode.postMessage({ command: 'openGraph' });
+    // Load graph data
+    vscode.postMessage({ command: 'loadGraph' });
+    
+    window.addEventListener('message', event => {
+      const message = event.data;
+      if (message.command === 'graphData') {
+        renderGraph(message.data);
+      } else if (message.command === 'nodeInfo') {
+        showNodeInfo(message.data);
+      }
+    });
+    
+    function renderGraph(data) {
+      document.getElementById('loading').style.display = 'none';
+      
+      const container = document.getElementById('graph-container');
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      
+      d3.select('#graph-container').selectAll('*').remove();
+      
+      svg = d3.select('#graph-container').append('svg')
+        .attr('width', width)
+        .attr('height', height)
+        .call(zoom);
+      
+      const g = svg.append('g');
+      
+      nodes = data.nodes || [];
+      links = data.links || [];
+      
+      const colorScale = d3.scaleOrdinal()
+        .domain(['file', 'function', 'class', 'import', 'dependency'])
+        .range(['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']);
+      
+      // Add arrows
+      g.append('defs').selectAll('marker')
+        .data(['default'])
+        .enter().append('marker')
+        .attr('id', 'arrow')
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 20)
+        .attr('refY', 0)
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('fill', '#888')
+        .attr('d', 'M0,-5L10,0L0,5');
+      
+      // Draw links
+      const link = g.selectAll('.link')
+        .data(links)
+        .enter().append('line')
+        .attr('class', 'link')
+        .attr('stroke', '#888')
+        .attr('stroke-width', 1.5)
+        .attr('marker-end', 'url(#arrow)');
+      
+      // Draw nodes
+      const node = g.selectAll('.node')
+        .data(nodes)
+        .enter().append('g')
+        .attr('class', 'node')
+        .call(d3.drag()
+          .on('start', dragstarted)
+          .on('drag', dragged)
+          .on('end', dragended));
+      
+      node.append('circle')
+        .attr('r', 8)
+        .attr('fill', d => colorScale(d.type) || '#666');
+      
+      node.append('text')
+        .attr('dx', 12)
+        .attr('dy', 4)
+        .text(d => d.label || d.id)
+        .style('font-size', '12px')
+        .style('fill', 'var(--vscode-foreground)')
+        .style('pointer-events', 'none');
+      
+      // Click handler
+      node.on('click', (e, d) => {
+        vscode.postMessage({ command: 'nodeClick', node: d });
+      });
+      
+      // Simulation
+      simulation = d3.forceSimulation(nodes)
+        .force('charge', d3.forceManyBody().strength(-100))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .force('link', d3.forceLink(links).id(d => d.id).distance(100))
+        .on('tick', ticked);
+      
+      function ticked() {
+        link
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+        
+        node.attr('transform', d => \`translate(\${d.x},\${d.y})\`);
+      }
+      
+      function dragstarted(e, d) {
+        if (!e.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      }
+      
+      function dragged(e, d) {
+        d.fx = e.x;
+        d.fy = e.y;
+        simulation.alpha(0.3).restart();
+      }
+      
+      function dragended(e, d) {
+        if (!e.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+      }
+      
+      // Search
+      document.getElementById('search').addEventListener('input', (e) => {
+        const term = e.target.value.toLowerCase();
+        if (!term) return;
+        
+        const match = nodes.find(n => 
+          (n.label || n.id).toLowerCase().includes(term)
+        );
+        
+        if (match) {
+          svg.transition().duration(750).call(
+            zoom.transform,
+            d3.zoomIdentity.translate(match.x - width/2, match.y - height/2).scale(2)
+          );
+          
+          d3.selectAll('.node')
+            .select('circle')
+            .attr('stroke', d => d === match ? '#f00' : null)
+            .attr('stroke-width', d => d === match ? 3 : null);
+          
+          setTimeout(() => {
+            d3.selectAll('.node').select('circle')
+              .attr('stroke', null)
+              .attr('stroke-width', null);
+          }, 2000);
+        }
+      });
+    }
+    
+    function showNodeInfo(data) {
+      const info = document.getElementById('nodeInfo');
+      document.getElementById('nodeTitle').textContent = data.label || data.id;
+      document.getElementById('nodeDetails').innerHTML = \`
+        <div class="detail"><strong>Type:</strong> \${data.type}</div>
+        <div class="detail"><strong>File:</strong> \${data.file_path || 'N/A'}</div>
+        <div class="detail"><strong>Dependencies:</strong> \${data.deps || 0}</div>
+        <div class="detail"><strong>Dependents:</strong> \${data.dependents || 0}</div>
+      \`;
+      info.style.display = 'block';
+    }
+    
+    function zoomIn() {
+      svg.transition().duration(300).call(zoom.scaleBy, 1.3);
+    }
+    
+    function zoomOut() {
+      svg.transition().duration(300).call(zoom.scaleBy, 0.7);
+    }
+    
+    function resetZoom() {
+      svg.transition().duration(300).call(zoom.transform, d3.zoomIdentity);
     }
     
     function refreshGraph() {
       vscode.postMessage({ command: 'refresh' });
     }
-    
-    window.addEventListener('message', event => {
-      const message = event.data;
-      if (message.command === 'graphLoaded') {
-        console.log('Graph loaded successfully');
-      }
-    });
   </script>
 </body>
 </html>`;

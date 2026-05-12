@@ -219,6 +219,30 @@ class OmniGraphService {
         }
         return results.slice(0, 20);
     }
+    async getGraphData() {
+        try {
+            // Export graph to JSON format
+            const output = await this.runOmnigraph(['export', 'json']);
+            const graph = JSON.parse(output);
+            // Convert to D3.js format
+            const nodes = graph.nodes.map((n) => ({
+                id: n.id,
+                type: n.type,
+                label: n.label,
+                file_path: n.file_path
+            }));
+            const links = graph.edges.map((e) => ({
+                source: e.from_id,
+                target: e.to_id,
+                type: e.type
+            }));
+            return { nodes, links };
+        }
+        catch (error) {
+            console.error('Failed to load graph:', error);
+            return { nodes: [], links: [] };
+        }
+    }
 }
 exports.OmniGraphService = OmniGraphService;
 //# sourceMappingURL=omnigraphService.js.map

@@ -22,6 +22,26 @@ export interface SearchResult {
   file_path?: string;
 }
 
+export interface GraphNode {
+  id: string;
+  type: string;
+  label: string;
+  file_path?: string;
+  x?: number;
+  y?: number;
+}
+
+export interface GraphLink {
+  source: string;
+  target: string;
+  type: string;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  links: GraphLink[];
+}
+
 export class OmniGraphService {
   private omnigraphPath = 'omnigraph';
   private projectRoot?: string;
@@ -237,5 +257,32 @@ export class OmniGraphService {
     }
     
     return results.slice(0, 20);
+  }
+
+  async getGraphData(): Promise<GraphData> {
+    try {
+      // Export graph to JSON format
+      const output = await this.runOmnigraph(['export', 'json']);
+      const graph = JSON.parse(output);
+      
+      // Convert to D3.js format
+      const nodes: GraphNode[] = graph.nodes.map((n: any) => ({
+        id: n.id,
+        type: n.type,
+        label: n.label,
+        file_path: n.file_path
+      }));
+      
+      const links: GraphLink[] = graph.edges.map((e: any) => ({
+        source: e.from_id,
+        target: e.to_id,
+        type: e.type
+      }));
+      
+      return { nodes, links };
+    } catch (error) {
+      console.error('Failed to load graph:', error);
+      return { nodes: [], links: [] };
+    }
   }
 }
