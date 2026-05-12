@@ -9,7 +9,6 @@ export class SessionResumeCommand {
   async run(projectPath: string, dbPath: string): Promise<void> {
     const sessionsDir = path.join(projectPath, "memory/sessions");
     
-    // First check filesystem for latest session (more reliable than DB)
     let latestSessionDir: string | null = null;
     let latestMtimeMs = 0;
     
@@ -40,14 +39,12 @@ export class SessionResumeCommand {
     
     console.log(`\n## Session Resume: ${latestSessionDir}`);
     
-    // Parse generated time from summary
     const generatedMatch = summaryContent.match(/Generated:\s*(.+)/);
     if (generatedMatch) {
       console.log(`Generated: ${generatedMatch[1].trim()}`);
     }
     console.log();
     
-    // Parse files modified from summary
     const filesSection = summaryContent.match(/## Files Modified[\s\S]*?(?=^## )/m);
     let modifiedFiles: string[] = [];
     if (filesSection) {
@@ -66,24 +63,24 @@ export class SessionResumeCommand {
       console.log("No files modified in this session.\n");
     }
     
-    // Context check using DB if available
     if (fs.existsSync(dbPath)) {
       const db = new GraphDB(dbPath);
-      const allEdges = db.getAllEdges();
-      const allNodes = db.getAllNodes();
-      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
       
       console.log("## Context Check\n");
       
       for (const target of modifiedFiles) {
-        const usedBy = allEdges.filter(e => e.to_id === target && e.type !== "indexes").map(e => e.from_id);
-        const sessionCount = allEdges.filter(e => e.to_id === target && e.type === "session_modified").length;
-        const errors = allEdges.filter(e => e.to_id === target && e.type === "affects")
-          .map(e => e.from_id)
-          .filter(id => { const n = nodeMap.get(id); return n && n.type === "error"; });
+        const context = db.getFileContext(target, 1);
         
-        const risk = usedBy.length > 3 || errors.length > 0 ? "HIGH" : usedBy.length > 0 ? "MEDIUM" : "LOW";
-        console.log(`${target}: ${usedBy.length} dependents, ${sessionCount} sessions, ${errors.length} errors [${risk}]`);
+        if (!context) {
+          console.log(`${target}: not in graph [UNKNOWN]`);
+          continue;
+        }
+        
+        const sessionCount = context.sessions.length;
+        const errorCount = context.errors.length;
+        const issueCount = context.issues.length;
+        
+        console.log(`${target}: ${context.dependent_count} dependents, ${sessionCount} sessions, ${errorCount} errors, ${issueCount} issues [${context.risk}]`);
       }
       
       db.close();

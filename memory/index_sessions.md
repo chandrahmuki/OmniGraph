@@ -37,3 +37,4 @@
 ## 2026-05-12
 
 - [fix-dedup-errors-issues-queries-group-concat-disti](sessions/2026-05-12_fix-dedup-errors-issues-queries-group-concat-disti/)
+- [refactor-check-command-db-helper-getfilecontext-de](sessions/2026-05-12_refactor-check-command-db-helper-getfilecontext-de/)
