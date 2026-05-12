@@ -989,6 +989,62 @@ export class GraphDB {
     return events;
   }
 
+  getHotspots(limit: number = 15) {
+    const sessionMod = this.db.query(`
+      SELECT e.to_id as target, COUNT(*) as count, GROUP_CONCAT(e.from_id) as sessions
+      FROM edges e
+      WHERE e.type = 'session_modified'
+      GROUP BY e.to_id
+    `).all() as any[];
+
+    const lessonApply = this.db.query(`
+      SELECT e.to_id as target, COUNT(*) as count, GROUP_CONCAT(e.from_id) as lessons
+      FROM edges e
+      WHERE e.type = 'lesson_applies_to'
+      GROUP BY e.to_id
+    `).all() as any[];
+
+    const sessionMap = new Map<string, { count: number; sessions: string[] }>();
+    for (const row of sessionMod) {
+      sessionMap.set(row.target, {
+        count: row.count,
+        sessions: row.sessions ? row.sessions.split(',') : []
+      });
+    }
+
+    const lessonMap = new Map<string, { count: number; lessons: string[] }>();
+    for (const row of lessonApply) {
+      lessonMap.set(row.target, {
+        count: row.count,
+        lessons: row.lessons ? row.lessons.split(',') : []
+      });
+    }
+
+    const allTargets = new Set([...sessionMap.keys(), ...lessonMap.keys()]);
+    const sorted = [...allTargets].sort((a, b) => {
+      const scoreA = (sessionMap.get(a)?.count || 0) * 2 + (lessonMap.get(a)?.count || 0);
+      const scoreB = (sessionMap.get(b)?.count || 0) * 2 + (lessonMap.get(b)?.count || 0);
+      return scoreB - scoreA;
+    });
+
+    const results = [];
+    for (const target of sorted.slice(0, limit)) {
+      const sData = sessionMap.get(target) || { count: 0, sessions: [] };
+      const lData = lessonMap.get(target) || { count: 0, lessons: [] };
+      if (sData.count === 0 && lData.count === 0) continue;
+
+      results.push({
+        target,
+        session_count: sData.count,
+        lesson_count: lData.count,
+        sessions: sData.sessions,
+        lessons: lData.lessons
+      });
+    }
+
+    return results;
+  }
+
   getCurrentGraphHash(): { nodes_hash: string; edges_hash: string; nodes: number; edges: number } {
     const allNodes = this.getAllNodes();
     const allEdges = this.getAllEdges();
