@@ -50,3 +50,5 @@
 - [refactor-path-git-log-backlinks-commands-use-db-he](sessions/2026-05-12_refactor-path-git-log-backlinks-commands-use-db-he/)
 - [feat-error-handling-try-catch-blocks-in-check-path](sessions/2026-05-12_feat-error-handling-try-catch-blocks-in-check-path/)
 - [feat-vs-code-extension-initial-scaffolding-with-ch](sessions/2026-05-12_feat-vs-code-extension-initial-scaffolding-with-ch/)
+- [feat-vs-code-extension-d3-js-integration-interacti](sessions/2026-05-12_feat-vs-code-extension-d3-js-integration-interacti/)
+- [fix-db-interfaces-vscode-d3](sessions/2026-05-12_fix-db-interfaces-vscode-d3/)
