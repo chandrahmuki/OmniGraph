@@ -1,4 +1,4 @@
-import { GraphDB } from "../db.js";
+import { GraphDB } from "../db.ts";
 
 export class DecisionsCommand {
   async run(

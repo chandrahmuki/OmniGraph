@@ -1,4 +1,4 @@
-import { GraphDB } from "../db.js";
+import { GraphDB } from "../db.ts";
 import { buildIndex } from "../extractors/semantic.js";
 
 export class SemanticCommand {
