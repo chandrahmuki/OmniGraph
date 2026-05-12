@@ -1224,6 +1224,59 @@ export class GraphDB {
     return { orphans, unusedInputs, deadRefs };
   }
 
+  searchNodes(term: string, limit: number = 20) {
+    const safeTerm = `%${term.toLowerCase()}%`;
+    return this.db.query(`
+      SELECT id, type, label, file_path, created_at
+      FROM nodes
+      WHERE LOWER(label) LIKE ? OR LOWER(id) LIKE ?
+      LIMIT ?
+    `).all(safeTerm, safeTerm, limit) as any[];
+  }
+
+  searchAnnotations(term: string, limit: number = 20) {
+    const safeTerm = `%${term.toLowerCase()}%`;
+    return this.db.query(`
+      SELECT node_id, key, value
+      FROM annotations
+      WHERE LOWER(value) LIKE ? OR LOWER(key) LIKE ?
+      LIMIT ?
+    `).all(safeTerm, safeTerm, limit) as any[];
+  }
+
+  getSessions(dateFilter?: string, recentOnly?: boolean, limit: number = 10) {
+    let query = `
+      SELECT id, label, created_at
+      FROM nodes
+      WHERE type = 'session'
+    `;
+
+    if (dateFilter) {
+      query += ` AND created_at LIKE ?`;
+    }
+
+    query += ` ORDER BY created_at DESC`;
+
+    let sessions = dateFilter
+      ? this.db.prepare(query).all(`${dateFilter}%`) as any[]
+      : this.db.prepare(query).all() as any[];
+
+    if (recentOnly) {
+      sessions = sessions.slice(0, limit);
+    }
+
+    return sessions;
+  }
+
+  getSessionFiles(sessionId: string) {
+    return this.db.query(`
+      SELECT e.to_id as file_id, n.label as file_label, n.type as file_type
+      FROM edges e
+      LEFT JOIN nodes n ON e.to_id = n.id
+      WHERE e.from_id = ? AND e.type = 'session_modified'
+    `).all(sessionId) as any[];
+  }
+
   getCurrentGraphHash(): { nodes_hash: string; edges_hash: string; nodes: number; edges: number } {
     const allNodes = this.getAllNodes();
     const allEdges = this.getAllEdges();
