@@ -565,6 +565,65 @@ export class GraphDB {
     return results;
   }
 
+  getFileContext(nodeId: string, depth: number = 1) {
+    const node = this.getNodeById(nodeId);
+    if (!node) return null;
+
+    const deps = this.db.query(`
+      SELECT e.to_id, e.type as edge_type, n.type as node_type, n.label
+      FROM edges e
+      LEFT JOIN nodes n ON e.to_id = n.id
+      WHERE e.from_id = ?
+    `).all(nodeId) as any[];
+
+    const backlinks = this.getBacklinks(nodeId, depth);
+    const backlinkIds = new Set(backlinks.map(b => b.id));
+
+    const sessions = this.db.query(`
+      SELECT e.from_id as session_id, e.type as edge_type
+      FROM edges e
+      WHERE e.to_id = ? AND e.from_id LIKE '2026-%'
+    `).all(nodeId) as any[];
+
+    const errors = this.db.query(`
+      SELECT e.from_id as error_id, e.type as edge_type, n.label
+      FROM edges e
+      LEFT JOIN nodes n ON e.from_id = n.id
+      WHERE e.to_id = ? AND e.type = 'affects' AND n.type = 'error'
+    `).all(nodeId) as any[];
+
+    const issues = this.db.query(`
+      SELECT e.from_id as issue_id, e.type as edge_type, n.label
+      FROM edges e
+      LEFT JOIN nodes n ON e.from_id = n.id
+      WHERE e.to_id = ? AND e.type = 'affects' AND n.type = 'issue'
+    `).all(nodeId) as any[];
+
+    const lessons = this.db.query(`
+      SELECT e.from_id as lesson_id, e.type as edge_type, n.label
+      FROM edges e
+      LEFT JOIN nodes n ON e.from_id = n.id
+      WHERE e.to_id = ? AND e.type = 'applies_to' AND n.type = 'lesson'
+    `).all(nodeId) as any[];
+
+    const directDepCount = backlinks.filter(b => b.distance === 1).length;
+    const risk = directDepCount > 10 || errors.length > 0 ? "HIGH" 
+                 : directDepCount > 3 ? "MEDIUM" 
+                 : "LOW";
+
+    return {
+      node,
+      deps,
+      backlinks,
+      sessions,
+      errors,
+      issues,
+      lessons,
+      risk,
+      dependent_count: directDepCount
+    };
+  }
+
   exportJSON(filterType?: string): { nodes: any[]; edges: any[] } {
     let nodes: any[];
     if (filterType) {

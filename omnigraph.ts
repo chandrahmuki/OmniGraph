@@ -94,6 +94,8 @@ Commands:
   query      Search the DB (nodes, annotations, lesson items)
   search     Search concepts (functions, classes, structs, types)
   check      Pre-edit check for a file (dependencies, sessions, lessons)
+                --depth=N      Transitive dependents up to depth N (default: 1)
+                --json         Output as JSON for IDE integration
   impact     Show full blast radius of changing a file (transitive reverse deps)
   path       Find shortest dependency path between two nodes
   backlinks  Show files that depend on this file (reverse deps)
@@ -355,7 +357,10 @@ Topic: ${topic}
     }
 
     case "check": {
-      await new CheckCommand().run(projectPath, dbPath, args.slice(1));
+      const depthArg = args.find(a => a.startsWith("--depth="));
+      const depth = depthArg ? parseInt(depthArg.split("=")[1], 10) : 1;
+      const asJson = args.includes("--json");
+      await new CheckCommand().run(projectPath, dbPath, args.slice(1), { depth, asJson });
       break;
     }
 
