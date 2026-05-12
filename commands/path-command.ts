@@ -13,28 +13,33 @@ export class PathCommand {
     const fromId = args[0];
     const toId = args[1];
     if (!fromId || !toId) {
-      console.log("Usage: omnigraph path <from-node> <to-node>");
+      console.error("Error: Missing arguments. Usage: omnigraph path <from-node> <to-node>");
       process.exit(1);
     }
 
-    const db = new GraphDB(dbPath);
-    const path = db.findPath(fromId, toId);
-    const allNodes = db.getAllNodes();
-    const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
+    try {
+      const db = new GraphDB(dbPath);
+      const path = db.findPath(fromId, toId);
+      const allNodes = db.getAllNodes();
+      const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
 
-    console.log(`\n## Path: ${fromId} → ${toId}\n`);
-    
-    if (path) {
-      console.log(`Length: ${path.length - 1} hops\n`);
-      for (let i = 0; i < path.length; i++) {
-        const node = nodeMap.get(path[i]);
-        const prefix = i === 0 ? "●" : "→";
-        console.log(`  ${prefix} ${path[i]} (${node?.type || "?"})`);
+      console.log(`\n## Path: ${fromId} → ${toId}\n`);
+      
+      if (path) {
+        console.log(`Length: ${path.length - 1} hops\n`);
+        for (let i = 0; i < path.length; i++) {
+          const node = nodeMap.get(path[i]);
+          const prefix = i === 0 ? "●" : "→";
+          console.log(`  ${prefix} ${path[i]} (${node?.type || "?"})`);
+        }
+      } else {
+        console.log(`No path found between ${fromId} and ${toId}`);
       }
-    } else {
-      console.log("No path found.");
-    }
 
-    db.close();
+      db.close();
+    } catch (error) {
+      console.error(`Error finding path: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      process.exit(1);
+    }
   }
 }
