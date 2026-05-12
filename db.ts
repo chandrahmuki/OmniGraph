@@ -927,6 +927,68 @@ export class GraphDB {
     };
   }
 
+  getFileTimeline(nodeId: string) {
+    const events: { date: string; type: string; label: string; node_id: string; metadata: string }[] = [];
+
+    const changes = this.db.query(`
+      SELECT n.id, n.label, n.created_at, a.value as change_type
+      FROM edges e
+      JOIN nodes n ON e.from_id = n.id
+      LEFT JOIN annotations a ON n.id = a.node_id AND a.key = 'change_type'
+      WHERE e.to_id = ? AND e.type = 'affects' AND n.type = 'change'
+      ORDER BY n.created_at DESC
+    `).all(nodeId) as any[];
+
+    for (const c of changes) {
+      events.push({
+        date: c.created_at || "unknown",
+        type: "CHANGE",
+        label: c.label,
+        node_id: c.id,
+        metadata: c.change_type ? `[${c.change_type}]` : ""
+      });
+    }
+
+    const issues = this.db.query(`
+      SELECT n.id, n.label, n.created_at
+      FROM edges e
+      JOIN nodes n ON e.from_id = n.id
+      WHERE e.to_id = ? AND e.type = 'affects' AND n.type = 'issue'
+      ORDER BY n.created_at DESC
+    `).all(nodeId) as any[];
+
+    for (const i of issues) {
+      events.push({ date: i.created_at || "unknown", type: "ISSUE", label: i.label, node_id: i.id, metadata: "" });
+    }
+
+    const decisions = this.db.query(`
+      SELECT n.id, n.label, n.created_at
+      FROM edges e
+      JOIN nodes n ON e.from_id = n.id
+      WHERE e.to_id = ? AND e.type = 'applies_to' AND n.type = 'decision'
+      ORDER BY n.created_at DESC
+    `).all(nodeId) as any[];
+
+    for (const d of decisions) {
+      events.push({ date: d.created_at || "unknown", type: "DECISION", label: d.label, node_id: d.id, metadata: "" });
+    }
+
+    const sessions = this.db.query(`
+      SELECT n.id, n.label, n.created_at
+      FROM edges e
+      JOIN nodes n ON e.from_id = n.id
+      WHERE e.to_id = ? AND e.type = 'session_modified' AND n.type = 'session'
+      ORDER BY n.created_at DESC
+    `).all(nodeId) as any[];
+
+    for (const s of sessions) {
+      events.push({ date: s.created_at || "unknown", type: "SESSION", label: s.label, node_id: s.id, metadata: "" });
+    }
+
+    events.sort((a, b) => a.date.localeCompare(b.date));
+    return events;
+  }
+
   getCurrentGraphHash(): { nodes_hash: string; edges_hash: string; nodes: number; edges: number } {
     const allNodes = this.getAllNodes();
     const allEdges = this.getAllEdges();

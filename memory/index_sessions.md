@@ -41,3 +41,4 @@
 - [refactor-session-resume-use-getfilecontext-db-help](sessions/2026-05-12_refactor-session-resume-use-getfilecontext-db-help/)
 - [refactor-impact-command-use-getbacklinks-db-helper](sessions/2026-05-12_refactor-impact-command-use-getbacklinks-db-helper/)
 - [fix-hotspots-command-import-db-ts-not-db-js](sessions/2026-05-12_fix-hotspots-command-import-db-ts-not-db-js/)
+- [fix-standardize-imports-db-ts-not-db-js-across-all](sessions/2026-05-12_fix-standardize-imports-db-ts-not-db-js-across-all/)
