@@ -46,3 +46,4 @@
 - [refactor-hotspots-command-use-gethotspots-db-helpe](sessions/2026-05-12_refactor-hotspots-command-use-gethotspots-db-helpe/)
 - [refactor-issues-decisions-changes-commands-use-db-](sessions/2026-05-12_refactor-issues-decisions-changes-commands-use-db-/)
 - [refactor-errors-lessons-orphans-commands-use-db-he](sessions/2026-05-12_refactor-errors-lessons-orphans-commands-use-db-he/)
+- [refactor-query-sessions-commands-use-db-helpers-se](sessions/2026-05-12_refactor-query-sessions-commands-use-db-helpers-se/)

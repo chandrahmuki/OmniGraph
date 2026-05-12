@@ -1,5 +1,4 @@
 import { GraphDB } from "../db.ts";
-import fs from "node:fs";
 
 interface Options {
   depth: number;
@@ -11,7 +10,7 @@ export class BacklinksCommand {
   description = "Show files that depend on this file (reverse deps)";
 
   async run(projectPath: string, dbPath: string, args: string[], options: Options): Promise<void> {
-    if (!fs.existsSync(dbPath)) {
+    if (!Bun.file(dbPath).exists) {
       console.error("DB not found. Run 'omnigraph build' first.");
       process.exit(1);
     }
@@ -24,21 +23,21 @@ export class BacklinksCommand {
 
     const db = new GraphDB(dbPath);
     const backlinks = db.getBacklinks(target, options.depth);
-    const allNodes = db.getAllNodes();
-    const nodeMap = new Map(allNodes.map((n: any) => [n.id, n]));
 
     if (options.asJson) {
+      const backlinksWithLabels = backlinks.map(b => ({
+        id: b.id,
+        type: b.type,
+        edge_type: b.edge_type,
+        distance: b.distance,
+        label: db.getNodeById(b.id)?.label || b.id
+      }));
+
       console.log(JSON.stringify({
         target,
         depth: options.depth,
         total: backlinks.length,
-        backlinks: backlinks.map(b => ({
-          id: b.id,
-          type: b.type,
-          edge_type: b.edge_type,
-          distance: b.distance,
-          label: nodeMap.get(b.id)?.label || b.id
-        }))
+        backlinks: backlinksWithLabels
       }, null, 2));
     } else {
       console.log(`\n## Backlinks: ${target}\n`);
@@ -53,7 +52,7 @@ export class BacklinksCommand {
       for (const [dist, links] of byDistance.entries()) {
         console.log(`### Depth ${dist}:`);
         for (const link of links) {
-          const node = nodeMap.get(link.id);
+          const node = db.getNodeById(link.id);
           console.log(`  ${link.id} [${link.edge_type}] (${link.type})${node?.file_path ? ` — ${node.file_path}` : ""}`);
         }
         console.log();

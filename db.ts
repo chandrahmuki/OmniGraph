@@ -1206,7 +1206,52 @@ export class GraphDB {
     return items;
   }
 
-  getOrphans(projectPath: string) {
+interface NodeResult {
+  id: string;
+  type: string;
+  label: string;
+  file_path?: string;
+  created_at?: string;
+}
+
+interface EdgeResult {
+  id?: number;
+  from_id: string;
+  to_id: string;
+  type: string;
+  confidence?: string;
+}
+
+interface BacklinkResult {
+  id: string;
+  type: string;
+  edge_type: string;
+  distance: number;
+}
+
+interface TimelineEvent {
+  date: string;
+  type: string;
+  label: string;
+  node_id: string;
+  metadata: string;
+}
+
+interface HotspotResult {
+  target: string;
+  session_count: number;
+  lesson_count: number;
+  sessions: string[];
+  lessons: string[];
+}
+
+interface OrphanResult {
+  orphans: NodeResult[];
+  unusedInputs: NodeResult[];
+  deadRefs: NodeResult[];
+}
+
+  getOrphans(projectPath: string): OrphanResult {
     const allNodes = this.getAllNodes();
     const allEdges = this.getAllEdges();
 
@@ -1275,6 +1320,60 @@ export class GraphDB {
       LEFT JOIN nodes n ON e.to_id = n.id
       WHERE e.from_id = ? AND e.type = 'session_modified'
     `).all(sessionId) as any[];
+  }
+
+  findPath(fromId: string, toId: string): string[] | null {
+    const allEdges = this.getAllEdges();
+    const allNodes = this.getAllNodes();
+    
+    const adjacency = new Map<string, string[]>();
+    for (const n of allNodes) {
+      adjacency.set(n.id, []);
+    }
+    for (const e of allEdges) {
+      const neighbors = adjacency.get(e.from_id) || [];
+      neighbors.push(e.to_id);
+      adjacency.set(e.from_id, neighbors);
+    }
+
+    const visited = new Set<string>();
+    const queue: { id: string; path: string[] }[] = [{ id: fromId, path: [fromId] }];
+    visited.add(fromId);
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current.id === toId) {
+        return current.path;
+      }
+      const neighbors = adjacency.get(current.id) || [];
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push({ id: neighbor, path: [...current.path, neighbor] });
+        }
+      }
+    }
+
+    return null;
+  }
+
+  getRecentCommits(limit: number = 10) {
+    const commits = this.db.query(`
+      SELECT id, label, created_at
+      FROM nodes
+      WHERE type = 'commit'
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(limit) as any[];
+
+    return commits.map(c => ({
+      ...c,
+      files: this.db.query(`
+        SELECT e.to_id as file_id
+        FROM edges e
+        WHERE e.from_id = ? AND e.type = 'changed'
+      `).all(c.id).map((f: any) => f.file_id)
+    }));
   }
 
   getCurrentGraphHash(): { nodes_hash: string; edges_hash: string; nodes: number; edges: number } {
