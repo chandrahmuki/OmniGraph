@@ -1,44 +1,34 @@
 import { GraphDB } from "../db.ts";
 
 export class LessonsCommand {
-  async run(
-    projectPath: string,
-    dbPath: string,
-    args: string[],
-    _options: {}
-  ): Promise<void> {
-    if (!this.checkDB(dbPath)) return;
+  name = "lessons";
+  description = "List lesson items (recent, for module, or all)";
+
+  async run(projectPath: string, dbPath: string, args: string[]): Promise<void> {
+    if (!Bun.file(dbPath).exists) {
+      console.error("DB not found. Run 'omnigraph build' first.");
+      process.exit(1);
+    }
+
+    const moduleFilter = args.find(a => a.startsWith("--module="))?.replace("--module=", "");
+    const recentOnly = args.includes("--recent") || args.includes("-r");
 
     const db = new GraphDB(dbPath);
-    const allNodes = db.getAllNodes();
+    const items = db.getLessonItems(moduleFilter, recentOnly, 15);
     const allEdges = db.getAllEdges();
     const annotationsByNode = db.getAllAnnotations();
 
-    const lessonItems = allNodes.filter((n: any) => n.type === "lesson_item");
-    const moduleFilter = args.find(a => a.startsWith("--module="));
-    const isRecent = args.includes("--recent") || args.includes("-r");
-    const isAll = args.includes("--all") || args.includes("-a");
+    const header = moduleFilter ? ` for ${moduleFilter}` : "";
+    const filterText = recentOnly ? " (recent)" : "";
+    console.log(`\n## Lesson Items${header}${filterText} (${items.length})\n`);
 
-    let filtered = lessonItems;
-    if (moduleFilter) {
-      const modPath = moduleFilter.replace("--module=", "");
-      const applicableIds = new Set(
-        allEdges.filter(e => e.type === "lesson_applies_to" && e.to_id === modPath).map(e => e.from_id)
-      );
-      filtered = filtered.filter((n: any) => applicableIds.has(n.id));
+    if (!items.length) {
+      console.log("No lesson items found.");
+      db.close();
+      return;
     }
 
-    if (isRecent) {
-      filtered.sort((a: any, b: any) => {
-        const dateA = a.created_at || "0000";
-        const dateB = b.created_at || "0000";
-        return dateB.localeCompare(dateA);
-      });
-      filtered = filtered.slice(0, 15);
-    }
-
-    console.log(`\n## Lesson Items (${filtered.length}${moduleFilter ? ` for ${moduleFilter.replace("--module=", "")}` : ""})\n`);
-    for (const li of filtered) {
+    for (const li of items) {
       const tags = (annotationsByNode.get(li.id) || [])
         .filter(a => a.key === "tag")
         .map(a => a.value);
@@ -52,13 +42,5 @@ export class LessonsCommand {
     }
 
     db.close();
-  }
-
-  private checkDB(dbPath: string): boolean {
-    if (!Bun.file(dbPath).exists) {
-      console.error("DB not found. Run 'omnigraph build' first.");
-      process.exit(1);
-    }
-    return true;
   }
 }

@@ -1142,6 +1142,88 @@ export class GraphDB {
     return changes;
   }
 
+  getErrors(fileFilter?: string, unresolvedOnly?: boolean) {
+    let query = `
+      SELECT e.id, e.label, e.file_path,
+             (SELECT GROUP_CONCAT(DISTINCT f.label || ' [' || f.file_path || ']')
+              FROM edges er
+              JOIN nodes f ON er.to_id = f.id
+              WHERE er.from_id = e.id AND er.type = 'resolved_by') as fixes,
+             (SELECT GROUP_CONCAT(DISTINCT w.label || ' [' || w.file_path || ']')
+              FROM edges er
+              JOIN nodes w ON er.to_id = w.id
+              WHERE er.from_id = e.id AND er.type = 'workaround_by') as workarounds,
+             (SELECT GROUP_CONCAT(DISTINCT s.id)
+              FROM edges de
+              JOIN nodes s ON de.from_id = s.id
+              WHERE de.to_id = e.id AND e.type = 'detected_error') as sessions
+      FROM nodes e
+      WHERE e.type = 'error'
+    `;
+
+    if (fileFilter) {
+      query += ` AND e.id IN (
+        SELECT e2.from_id FROM edges e2 WHERE e2.to_id = ? AND e2.type = 'affects'
+      )`;
+    }
+
+    query += ` ORDER BY e.id`;
+
+    let errors = fileFilter
+      ? this.db.prepare(query).all(fileFilter) as any[]
+      : this.db.prepare(query).all() as any[];
+
+    if (unresolvedOnly) {
+      errors = errors.filter(e => !e.fixes && !e.workarounds);
+    }
+
+    return errors;
+  }
+
+  getLessonItems(moduleFilter?: string, recentOnly?: boolean, limit: number = 15) {
+    let query = `
+      SELECT n.id, n.label, n.created_at, n.type
+      FROM nodes n
+      WHERE n.type = 'lesson_item'
+    `;
+
+    if (moduleFilter) {
+      query += ` AND n.id IN (
+        SELECT e.from_id FROM edges e WHERE e.to_id = ? AND e.type = 'lesson_applies_to'
+      )`;
+    }
+
+    query += ` ORDER BY n.created_at DESC`;
+
+    let items = moduleFilter
+      ? this.db.prepare(query).all(moduleFilter) as any[]
+      : this.db.prepare(query).all() as any[];
+
+    if (recentOnly) {
+      items = items.slice(0, limit);
+    }
+
+    return items;
+  }
+
+  getOrphans(projectPath: string) {
+    const allNodes = this.getAllNodes();
+    const allEdges = this.getAllEdges();
+
+    const fromIds = new Set(allEdges.map(e => e.from_id));
+    const toIds = new Set(allEdges.map(e => e.to_id));
+
+    const orphans = allNodes.filter(n => !fromIds.has(n.id) && !toIds.has(n.id));
+    const unusedInputs = allNodes.filter(n => n.type === "input" && !toIds.has(n.id));
+    const deadRefs = allNodes.filter(n => {
+      if (n.type !== "file" || !n.file_path) return false;
+      const fullPath = `${projectPath}/${n.file_path}`;
+      return !Bun.file(fullPath).exists;
+    });
+
+    return { orphans, unusedInputs, deadRefs };
+  }
+
   getCurrentGraphHash(): { nodes_hash: string; edges_hash: string; nodes: number; edges: number } {
     const allNodes = this.getAllNodes();
     const allEdges = this.getAllEdges();

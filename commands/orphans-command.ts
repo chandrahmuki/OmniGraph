@@ -1,32 +1,17 @@
 import { GraphDB } from "../db.ts";
-import path from "node:path";
-import fs from "node:fs";
 
 export class OrphansCommand {
   name = "orphans";
   description = "Detect unused inputs, dead refs, isolated nodes";
 
   async run(projectPath: string, dbPath: string): Promise<void> {
-    if (!fs.existsSync(dbPath)) {
+    if (!Bun.file(dbPath).exists) {
       console.error("DB not found. Run 'omnigraph build' first.");
       process.exit(1);
     }
 
     const db = new GraphDB(dbPath);
-    const allNodes = db.getAllNodes();
-    const allEdges = db.getAllEdges();
-
-    const nodeIds = new Set(allNodes.map((n: any) => n.id));
-    const fromIds = new Set(allEdges.map((e: any) => e.from_id));
-    const toIds = new Set(allEdges.map((e: any) => e.to_id));
-
-    const orphans = allNodes.filter((n: any) => !fromIds.has(n.id) && !toIds.has(n.id));
-    const unusedInputs = allNodes.filter((n: any) => n.type === "input" && !toIds.has(n.id));
-    const deadRefs = allNodes.filter((n: any) => {
-      if (n.type !== "file" || !n.file_path) return false;
-      const fullPath = path.join(projectPath, n.file_path);
-      return !fs.existsSync(fullPath);
-    });
+    const { orphans, unusedInputs, deadRefs } = db.getOrphans(projectPath);
 
     console.log("\n## Orphan Analysis\n");
 
