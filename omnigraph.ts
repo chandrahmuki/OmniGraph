@@ -97,6 +97,8 @@ Commands:
                 --depth=N      Transitive dependents up to depth N (default: 1)
                 --json         Output as JSON for IDE integration
   impact     Show full blast radius of changing a file (transitive reverse deps)
+                --depth=N      Max depth for transitive deps (default: 10)
+                --json         Output as JSON
   path       Find shortest dependency path between two nodes
   backlinks  Show files that depend on this file (reverse deps)
                --depth=N      Transitive backlinks up to depth N (default: 1)
@@ -365,7 +367,10 @@ Topic: ${topic}
     }
 
     case "impact": {
-      await new ImpactCommand().run(projectPath, dbPath, args.slice(1));
+      const depthArg = args.find(a => a.startsWith("--depth="));
+      const maxDepth = depthArg ? parseInt(depthArg.split("=")[1], 10) : 10;
+      const asJson = args.includes("--json");
+      await new ImpactCommand().run(projectPath, dbPath, args.slice(1), { maxDepth, asJson });
       break;
     }
 
