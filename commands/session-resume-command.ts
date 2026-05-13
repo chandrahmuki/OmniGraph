@@ -1,12 +1,12 @@
-import { GraphDB } from "../db.ts";
 import path from "node:path";
 import fs from "node:fs";
 
 export class SessionResumeCommand {
   name = "session-resume";
-  description = "Show last session summary and context check";
+  description = "Show last session summary";
 
-  async run(projectPath: string, dbPath: string): Promise<void> {
+  async run(): Promise<void> {
+    const projectPath = process.cwd();
     const sessionsDir = path.join(projectPath, "memory/sessions");
     
     let latestSessionDir: string | null = null;
@@ -30,14 +30,14 @@ export class SessionResumeCommand {
     }
     
     if (!latestSessionDir) {
-      console.log("No sessions found. Create a session with 'omnigraph save' first.");
+      console.log("No sessions found.");
       return;
     }
     
     const summaryPath = path.join(sessionsDir, latestSessionDir, "summary.md");
     const summaryContent = fs.readFileSync(summaryPath, "utf-8");
     
-    console.log(`\n## Session Resume: ${latestSessionDir}`);
+    console.log(`\n## Session: ${latestSessionDir}`);
     
     const generatedMatch = summaryContent.match(/Generated:\s*(.+)/);
     if (generatedMatch) {
@@ -51,7 +51,7 @@ export class SessionResumeCommand {
       const fileLines = filesSection[0].split('\n')
         .filter(line => line.trim().startsWith('-'));
       modifiedFiles = fileLines.map(line => {
-        const m = line.match(/-\s*\[.*?\]\s*(.+)/);
+        const m = line.match(/-\s*\[.*?\]\s*(.+)/) || line.match(/-\s*([^\s(]+)/);
         return m ? m[1].trim() : null;
       }).filter(Boolean) as string[];
       console.log(`## Files Modified (${modifiedFiles.length})\n`);
@@ -59,31 +59,6 @@ export class SessionResumeCommand {
         console.log(`  - ${f}`);
       }
       console.log();
-    } else {
-      console.log("No files modified in this session.\n");
-    }
-    
-    if (fs.existsSync(dbPath)) {
-      const db = new GraphDB(dbPath);
-      
-      console.log("## Context Check\n");
-      
-      for (const target of modifiedFiles) {
-        const context = db.getFileContext(target, 1);
-        
-        if (!context) {
-          console.log(`${target}: not in graph [UNKNOWN]`);
-          continue;
-        }
-        
-        const sessionCount = context.sessions.length;
-        const errorCount = context.errors.length;
-        const issueCount = context.issues.length;
-        
-        console.log(`${target}: ${context.dependent_count} dependents, ${sessionCount} sessions, ${errorCount} errors, ${issueCount} issues [${context.risk}]`);
-      }
-      
-      db.close();
     }
   }
 }
