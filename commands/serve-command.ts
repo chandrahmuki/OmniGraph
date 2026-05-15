@@ -253,6 +253,17 @@ export class ServeCommand {
             return new Response("Graph visualization not found. Run 'omnigraph build' first.", { status: 404 });
           }
 
+          if (pathname === "/graph-data.js") {
+            const dataPath = path.join(projectPath, ".omnigraph", "graph-data.js");
+            if (Bun.file(dataPath).exists) {
+              const data = await Bun.file(dataPath).text();
+              return new Response(data, {
+                headers: { "Content-Type": "application/javascript" }
+              });
+            }
+            return new Response("Graph data not found", { status: 404 });
+          }
+
           return new Response("Not found", { status: 404 });
         } catch (err) {
           return jsonResponse({ error: (err as Error).message }, 500);

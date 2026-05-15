@@ -6,6 +6,10 @@
     "url": "git@github.com:chandrahmuki/OmniGraph.git"
   },
   "dependencies": {
+    "graphology": "^0.26.0",
+    "graphology-layout": "^0.6.1",
+    "graphology-layout-forceatlas2": "^0.10.1",
+    "sigma": "3",
     "web-tree-sitter": "^0.25.2"
   },
   "devDependencies": {},
