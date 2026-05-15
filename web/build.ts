@@ -25,9 +25,11 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
 
   const sigmaPath = path.join(import.meta.dirname || __dirname, "sigma.min.js");
   const graphologyPath = path.join(import.meta.dirname || __dirname, "graphology.min.js");
-  let sigmaCode = "", graphologyCode = "";
+  const d3Path = path.join(import.meta.dirname || __dirname, "d3.min.js");
+  let sigmaCode = "", graphologyCode = "", d3Code = "";
   try { sigmaCode = fs.readFileSync(sigmaPath, "utf-8"); } catch {}
   try { graphologyCode = fs.readFileSync(graphologyPath, "utf-8"); } catch {}
+  try { d3Code = fs.readFileSync(d3Path, "utf-8"); } catch {}
 
   // Optimize: compact data format
   const config = loadConfig(projectPath);
@@ -130,7 +132,7 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
   <div id="debug"></div>
   <div id="app"></div>
 
-  <script src="d3.min.js"></script>
+  <script>${d3Code}</script>
   <script>${graphologyCode}</script>
   <script>${sigmaCode}</script>
   <script src="graph-data.js"></script>
