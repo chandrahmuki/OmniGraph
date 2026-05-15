@@ -130,6 +130,7 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
   <div id="debug"></div>
   <div id="app"></div>
 
+  <script src="d3.min.js"></script>
   <script>${graphologyCode}</script>
   <script>${sigmaCode}</script>
   <script src="graph-data.js"></script>
@@ -148,16 +149,46 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       nodeIds.push(id);
     });
     compactEdges.forEach(([fromIdx, toIdx, typeIdx]) => {
-      graph.addEdge(nodeIds[fromIdx], nodeIds[toIdx], { type: typeIdx, color: edgeColors[relationLabels[typeIdx]] || 'rgba(48,54,61,0.6)', size: 0.5 });
-    });
-
-    graph.forEachNode(node => {
-      graph.setNodeAttribute(node, 'x', (Math.random() - 0.5) * 500);
-      graph.setNodeAttribute(node, 'y', (Math.random() - 0.5) * 500);
+      graph.addEdge(nodeIds[fromIdx], nodeIds[toIdx], { relationType: String(typeIdx), color: edgeColors[relationLabels[typeIdx]] || 'rgba(48,54,61,0.6)', size: 0.5 });
     });
 
     const saved = JSON.parse(localStorage.getItem('omnigraph_layout') || '{}');
-    Object.entries(saved).forEach(([id, p]) => { if (graph.hasNode(id)) { graph.setNodeAttribute(id, 'x', p.x); graph.setNodeAttribute(id, 'y', p.y); } });
+    const hasSavedLayout = Object.keys(saved).length > 0;
+
+    if (hasSavedLayout) {
+      Object.entries(saved).forEach(([id, p]) => { if (graph.hasNode(id)) { graph.setNodeAttribute(id, 'x', p.x); graph.setNodeAttribute(id, 'y', p.y); } });
+    } else {
+      graph.forEachNode(node => {
+        graph.setNodeAttribute(node, 'x', (Math.random() - 0.5) * 500);
+        graph.setNodeAttribute(node, 'y', (Math.random() - 0.5) * 500);
+      });
+    }
+
+    const d3Nodes = nodeIds.map(id => {
+      const attrs = graph.getNodeAttributes(id);
+      return { id, x: attrs.x, y: attrs.y, fx: null, fy: null };
+    });
+    const d3Links = compactEdges.map(([fromIdx, toIdx]) => ({ source: nodeIds[fromIdx], target: nodeIds[toIdx] }));
+
+    const simulation = d3.forceSimulation(d3Nodes)
+      .force('link', d3.forceLink(d3Links).id(d => d.id).distance(80).strength(0.4))
+      .force('charge', d3.forceManyBody().strength(-120))
+      .force('center', d3.forceCenter(0, 0))
+      .force('collision', d3.forceCollide().radius(d => (graph.getNodeAttributes(d.id).size || 4) + 5))
+      .alphaDecay(0.015)
+      .on('tick', () => {
+        d3Nodes.forEach(n => {
+          if (n.fx === null) graph.setNodeAttribute(n.id, 'x', n.x);
+          if (n.fy === null) graph.setNodeAttribute(n.id, 'y', n.y);
+        });
+        sigmaInstance.refresh();
+      });
+
+    if (hasSavedLayout) { simulation.stop(); }
+    else {
+      document.getElementById('loading').textContent = 'Computing layout...';
+      simulation.tick(300);
+    }
 
     const activeFilters = new Set(types);
     let focusMode = false, focusedNodeId = null, selectedNodeId = null, searchMatched = null, hoveredNodeId = null;
@@ -198,6 +229,23 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       selectedNodeId = null; document.getElementById('info').style.display = 'none';
       if (focusMode) { focusedNodeId = null; focusedNeighbors = new Set(); }
       sigmaInstance.refresh();
+    });
+
+    sigmaInstance.on('downNode', e => {
+      const n = d3Nodes.find(d => d.id === e.node);
+      if (n) { n.fx = graph.getNodeAttribute(e.node, 'x'); n.fy = graph.getNodeAttribute(e.node, 'y'); simulation.alpha(0.3).restart(); }
+    });
+    sigmaInstance.on('mousemove', e => {
+      const n = d3Nodes.find(d => d.id === e.node);
+      if (n && n.fx !== null && e.event) {
+        const vp = sigmaInstance.viewportToGraph({ x: e.event.x, y: e.event.y });
+        n.fx = vp.x; n.fy = vp.y;
+        graph.setNodeAttribute(n.id, 'x', vp.x); graph.setNodeAttribute(n.id, 'y', vp.y);
+        sigmaInstance.refresh();
+      }
+    });
+    sigmaInstance.on('mouseup', () => {
+      d3Nodes.forEach(n => { n.fx = null; n.fy = null; });
     });
 
     let saveTimeout = null;
@@ -269,7 +317,16 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
     });
 
     document.getElementById('exportBtn').addEventListener('click', () => { const c = document.querySelector('#app canvas'); if (c) { const a = document.createElement('a'); a.download = 'omnigraph-' + new Date().toISOString().slice(0, 10) + '.png'; a.href = c.toDataURL('image/png'); a.click(); } });
-    document.getElementById('resetLayoutBtn').addEventListener('click', () => { localStorage.removeItem('omnigraph_layout'); location.reload(); });
+    document.getElementById('resetLayoutBtn').addEventListener('click', () => {
+      localStorage.removeItem('omnigraph_layout');
+      graph.forEachNode(node => {
+        graph.setNodeAttribute(node, 'x', (Math.random() - 0.5) * 500);
+        graph.setNodeAttribute(node, 'y', (Math.random() - 0.5) * 500);
+      });
+      d3Nodes.forEach((n, i) => { n.x = graph.getNodeAttribute(n.id, 'x'); n.y = graph.getNodeAttribute(n.id, 'y'); n.fx = null; n.fy = null; });
+      simulation.alpha(1).restart();
+      sigmaInstance.refresh();
+    });
 
     document.getElementById('stats').textContent = graph.order + ' nodes | ' + graph.size + ' edges | WebGL';
   } catch(err) { document.getElementById('debug').style.display = 'block'; document.getElementById('debug').textContent = 'ERROR: ' + err.message + ' | ' + err.stack; }
