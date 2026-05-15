@@ -57,3 +57,4 @@
 ## 2026-05-15
 
 - [feat-canvas-renderer-60fps-performance-optimizatio](sessions/2026-05-15_feat-canvas-renderer-60fps-performance-optimizatio/)
+- [feat-canvas-renderer-60fps-optimization](sessions/2026-05-15_feat-canvas-renderer-60fps-optimization/)
