@@ -346,14 +346,26 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       .velocityDecay(0.5)
       .alpha(0.8);
 
-    // Throttled redraw
+    // Throttled redraw at 60fps
     let needsRedraw = true;
     let lastFrameTime = 0;
-    const FRAME_INTERVAL = 1000 / 40; // 40fps cap
+    const FRAME_INTERVAL = 1000 / 60;
+    let frameCount = 0;
+    let fps = 0;
+    let fpsLastCheck = performance.now();
 
     function requestRedraw() { needsRedraw = true; }
 
     function renderLoop(timestamp) {
+      frameCount++;
+      const now = performance.now();
+      if (now - fpsLastCheck >= 1000) {
+        fps = Math.round(frameCount * 1000 / (now - fpsLastCheck));
+        frameCount = 0;
+        fpsLastCheck = now;
+        document.getElementById('stats').textContent =
+          uniqueNodes.length + ' nodes | ' + validEdges.length + ' edges | ' + fps + ' fps';
+      }
       if (needsRedraw && timestamp - lastFrameTime >= FRAME_INTERVAL) {
         draw(searchMatched);
         needsRedraw = false;
