@@ -91,16 +91,22 @@ xdg-open .omnigraph/index.html  # Linux
 | `serve --port=8080` | Start HTTP API server | `omnigraph serve --port=8080` |
 | `serve --read-only` | Read-only mode | `omnigraph serve --read-only` |
 
-### AI & Semantic Features
+### Search
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `embed build` | Generate vector embeddings | `omnigraph embed build` |
-| `embed query <text>` | Semantic search | `omnigraph embed query "auth handling"` |
-| `embed --top=5` | Limit results | `omnigraph embed query auth --top=5` |
-| `embed --type=function` | Filter by node type | `omnigraph embed query auth --type=function` |
-| `ask <question>` | RAG Q&A over codebase | `omnigraph ask "Where is auth?"` |
-| `summarize <node>` | Auto-summary for a node | `omnigraph summarize db.ts` |
+| `semantic <query>` | BM25 semantic search | `omnigraph semantic "auth flow"` |
+| `semantic --type=function` | Filter by node type | `omnigraph semantic auth --type=function` |
+| `semantic --top=20` | Number of results | `omnigraph semantic auth --top=20` |
+| `query <term>` | Search nodes/annotations | `omnigraph query auth` |
+| `search <term>` | Search concepts (functions, classes) | `omnigraph search handleAuth` |
+| `search --kind=function` | Filter by concept kind | `omnigraph search auth --kind=function` |
+
+### Summaries
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `summarize <node>` | Generate summary for a node | `omnigraph summarize db.ts` |
 | `summarize --clusters` | Summarize all clusters | `omnigraph summarize --clusters` |
 
 ### Analytics
@@ -127,14 +133,6 @@ xdg-open .omnigraph/index.html  # Linux
 | `changes` | List changes (git + sessions) | `omnigraph changes` |
 | `changes --type=replace` | Filter by change type | `omnigraph changes --type=replace` |
 
-### Search
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `semantic <query>` | BM25 semantic search | `omnigraph semantic "auth flow"` |
-| `semantic --type=function` | Filter by node type | `omnigraph semantic auth --type=function` |
-| `semantic --top=20` | Number of results | `omnigraph semantic auth --top=20` |
-
 ---
 
 ## HTTP API
@@ -155,12 +153,11 @@ omnigraph serve --port 8080
 | `GET /api/impact?id=<id>` | GET | Impact analysis (BFS) |
 | `GET /api/search?q=<query>` | GET | Text search |
 | `GET /api/semantic?q=<query>` | GET | Semantic search |
-| `POST /api/ask` | POST | RAG Q&A |
 | `GET /api/summarize/:id` | GET | Auto-summary for node |
 | `GET /api/analytics` | GET | Graph analytics |
 | `GET /api/export?format=json` | GET | Export graph |
 | `GET /api/stats` | GET | Basic statistics |
-| `POST /api/webhook/git-push` | POST | Git webhook |
+| `POST /api/webhook/git-push` | POST | Git webhook (triggers rebuild) |
 
 ### Examples
 
@@ -173,11 +170,6 @@ curl "http://localhost:8080/api/semantic?q=authentication&top=5"
 
 # Get backlinks
 curl "http://localhost:8080/api/backlinks?id=src/auth.ts&depth=2"
-
-# Ask a question
-curl -X POST http://localhost:8080/api/ask \
-  -H "Content-Type: application/json" \
-  -d '{"question":"Where is authentication handled?"}'
 
 # Export for Gephi
 curl http://localhost:8080/api/export?format=graphml > graph.graphml
@@ -329,10 +321,9 @@ my-project/
 - ✅ **Decisions** — Record rationale for choices
 - ✅ **Changes** — Git + session change tracking
 
-### AI & Search
-- ✅ **Vector embeddings** — 128D TF-IDF vectors
-- ✅ **Semantic search** — Cosine similarity ranking
-- ✅ **RAG Q&A** — Context-aware answers
+### Search & Summaries
+- ✅ **BM25 semantic search** — Term-frequency based search with stemming
+- ✅ **Concept search** — Search functions, classes, structs by name
 - ✅ **Auto-summaries** — Generate node/cluster summaries
 - ✅ **Analytics** — Density, hub nodes, clusters
 
@@ -345,7 +336,7 @@ my-project/
 - ✅ **Legend** — Color-coded types
 
 ### Integration
-- ✅ **HTTP API** — 13 REST endpoints
+- ✅ **HTTP API** — 12 REST endpoints
 - ✅ **Export formats** — JSON, GraphML (Gephi), GEXF (Cytoscape)
 - ✅ **Git integration** — Commits, hooks, webhooks
 - ✅ **IDE-ready** — JSON output for plugins

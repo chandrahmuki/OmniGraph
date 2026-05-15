@@ -1390,6 +1390,28 @@ export class GraphDB {
     };
   }
 
+  semanticSearch(query: string, top: number = 10, typeFilter?: string): { node_id: string; node: any; score: number }[] {
+    const queryVector = this.simpleHash(query);
+    const allNodes = typeFilter 
+      ? this.getAllNodes().filter((n: any) => n.type === typeFilter)
+      : this.getAllNodes();
+    
+    const results: { node_id: string; node: any; score: number }[] = [];
+    
+    for (const node of allNodes) {
+      const nodeText = `${node.label} ${node.file_path || ''} ${node.type}`;
+      const nodeVector = this.simpleHash(nodeText);
+      const similarity = this.cosineSimilarity(queryVector, nodeVector);
+      
+      if (similarity > 0) {
+        results.push({ node_id: node.id, node, score: similarity });
+      }
+    }
+    
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, top);
+  }
+
   close() {
     this.db.close();
   }

@@ -7,6 +7,33 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
+    let
+      # Home manager module for installing skills
+      homeManagerModule = { config, lib, pkgs, ... }:
+        let
+          cfg = config.programs.omnigraph;
+        in
+        {
+          options.programs.omnigraph = {
+            enable = lib.mkEnableOption "omnigraph skills and configuration";
+
+            installSkills = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Install opencode skills for omnigraph";
+            };
+          };
+
+          config = lib.mkIf cfg.enable {
+            xdg.configFile = lib.mkIf cfg.installSkills {
+              "opencode/skills/omnigraph/SKILL.md" = {
+                source = "${self}/memory/skills/omnigraph/SKILL.md";
+                force = true;
+              };
+            };
+          };
+        };
+    in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -51,5 +78,10 @@
           '';
         };
       }
-    );
+    ) // {
+      homeManagerModules = {
+        default = homeManagerModule;
+        omnigraph = homeManagerModule;
+      };
+    };
 }

@@ -30,7 +30,7 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
   } catch {}
 
   const html = `<!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>OmniGraph</title>
@@ -42,7 +42,7 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       color: #c9d1d9;
       overflow: hidden;
     }
-    #graph { width: 100vw; height: 100vh; }
+    canvas { display: block; width: 100vw; height: 100vh; }
     #search {
       position: absolute;
       top: 16px;
@@ -77,7 +77,7 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       display: flex;
       flex-direction: column;
       gap: 4px;
-      background: rgba(33, 38, 45, 0.8);
+      background: rgba(33, 38, 45, 0.85);
       padding: 8px;
       border-radius: 8px;
       border: 1px solid #30363d;
@@ -111,10 +111,9 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       font-size: 11px;
       border-radius: 12px;
     }
-    #focusMode {
+    #focusMode, #exportBtn, #resetLayoutBtn {
       position: absolute;
       top: 16px;
-      right: 420px;
       z-index: 10;
       background: #21262d;
       border: 1px solid #30363d;
@@ -124,7 +123,10 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       font-size: 12px;
       cursor: pointer;
     }
+    #focusMode { right: 340px; }
     #focusMode.active { background: #1f6feb; border-color: #1f6feb; }
+    #exportBtn { right: 470px; }
+    #resetLayoutBtn { right: 590px; }
     #legend {
       position: absolute;
       bottom: 50px;
@@ -136,7 +138,6 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       padding: 10px;
       max-height: 300px;
       overflow-y: auto;
-      display: none;
     }
     .legend-item {
       display: flex;
@@ -202,11 +203,26 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       max-width: 400px;
       display: none;
     }
+    #tooltip {
+      position: absolute;
+      z-index: 20;
+      background: rgba(13, 17, 23, 0.95);
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: #c9d1d9;
+      pointer-events: none;
+      display: none;
+      max-width: 250px;
+    }
   </style>
 </head>
 <body>
-  <div id="search"><input type="text" id="searchInput" placeholder="Rechercher..."></div>
+  <div id="search"><input type="text" id="searchInput" placeholder="Search..."></div>
   <button id="focusMode">Focus Mode</button>
+  <button id="exportBtn">Export PNG</button>
+  <button id="resetLayoutBtn">Reset Layout</button>
   <div id="filters"></div>
   <div id="legend"></div>
   <div id="info">
@@ -218,10 +234,10 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
   </div>
   <div id="stats"></div>
   <div id="debug"></div>
-  <svg id="graph"></svg>
+  <div id="tooltip"></div>
+  <canvas id="graph"></canvas>
 
   <script>
-    // D3 inlined for offline/file:// compatibility
     ${d3Code}
   </script>
   <script>
@@ -240,20 +256,10 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
     const edgeColors = Object.fromEntries(
       Object.entries(relationTypes).map(([k, v]) => [k, v.color || '#30363d'])
     );
-    edgeColors.default = '#30363d';
+    edgeColors.default = 'rgba(48,54,61,0.6)';
     const relationLabels = Object.fromEntries(
       Object.entries(relationTypes).map(([k, v]) => [k, v.label || k])
     );
-
-    // Cluster by folder
-    const clusterMap = new Map();
-    uniqueNodes.forEach(n => {
-      if (n.file_path) {
-        const folder = n.file_path.split('/')[0];
-        if (!clusterMap.has(folder)) clusterMap.set(folder, []);
-        clusterMap.get(folder).push(n.id);
-      }
-    });
 
     // Deduplicate
     const seenNodeIds = new Set();
@@ -265,105 +271,152 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
     const nodeIdSet = new Set(uniqueNodes.map(n => n.id));
     const validEdges = edges.filter(e => nodeIdSet.has(e.from_id) && nodeIdSet.has(e.to_id));
 
+    // Calculate connections
+    const connCount = {};
+    validEdges.forEach(e => {
+      connCount[e.from_id] = (connCount[e.from_id] || 0) + 1;
+      connCount[e.to_id] = (connCount[e.to_id] || 0) + 1;
+    });
+    uniqueNodes.forEach(n => { n.connections = connCount[n.id] || 0; });
+
+    // Load saved positions
+    const savedPositions = JSON.parse(localStorage.getItem('omnigraph_layout') || '{}');
+    uniqueNodes.forEach(n => {
+      if (savedPositions[n.id]) { n.x = savedPositions[n.id].x; n.y = savedPositions[n.id].y; }
+    });
+
+    // Cluster by folder
+    const clusterMap = new Map();
+    uniqueNodes.forEach(n => {
+      if (n.file_path) {
+        const folder = n.file_path.split('/')[0];
+        if (!clusterMap.has(folder)) clusterMap.set(folder, []);
+        clusterMap.get(folder).push(n.id);
+      }
+    });
+
+    const canvas = document.getElementById('graph');
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+
+    function resize() {
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      ctx.scale(dpr, dpr);
+    }
+    resize();
+    window.addEventListener('resize', () => { resize(); simulation.alpha(0.3).restart(); });
+
     const width = window.innerWidth;
     const height = window.innerHeight;
 
-    const svg = d3.select('#graph')
-      .attr('width', width)
-      .attr('height', height);
-
-    const g = svg.append('g');
-
-    const zoom = d3.zoom()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (e) => g.attr('transform', e.transform));
-    svg.call(zoom);
-
-    uniqueNodes.forEach(n => {
-      n.connections = validEdges.filter(e => e.from_id === n.id || e.to_id === n.id).length;
-    });
-
     // Radius by type
     function getRadius(n) {
-      if (n.type === 'lesson_item') return Math.sqrt(Math.max(n.connections || 1, 1)) * 3 + 3;
-      if (n.type === 'option') return 3;
-      return Math.sqrt(Math.max(n.connections || 1, 1)) * 4 + 4;
+      if (n.type === 'lesson_item') return Math.sqrt(Math.max(n.connections || 1, 1)) * 2.5 + 3;
+      if (n.type === 'option') return 2;
+      return Math.sqrt(Math.max(n.connections || 1, 1)) * 3 + 4;
     }
 
-    const typeAngles = {};
+    // Initialize positions if not saved
     const types = [...new Set(uniqueNodes.map(n => n.type))];
+    const typeAngles = {};
     types.forEach((t, i) => typeAngles[t] = (i / types.length) * 2 * Math.PI);
-
     uniqueNodes.forEach(n => {
-      const angle = typeAngles[n.type] || 0;
-      const dist = 150 + Math.random() * 200;
-      n.x = width / 2 + Math.cos(angle) * dist;
-      n.y = height / 2 + Math.sin(angle) * dist;
+      if (n.x == null) {
+        const angle = typeAngles[n.type] || 0;
+        const dist = 150 + Math.random() * 200;
+        n.x = width / 2 + Math.cos(angle) * dist;
+        n.y = height / 2 + Math.sin(angle) * dist;
+      }
     });
 
     validEdges.forEach(e => {
-      e.source = e.from_id;
-      e.target = e.to_id;
+      e.source = uniqueNodes.find(n => n.id === e.from_id);
+      e.target = uniqueNodes.find(n => n.id === e.to_id);
     });
 
     const simulation = d3.forceSimulation(uniqueNodes)
-      .force('link', d3.forceLink(validEdges).id(d => d.id).distance(60).strength(0.3))
-      .force('charge', d3.forceManyBody().strength(-80))
-      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('link', d3.forceLink(validEdges).id(d => d.id).distance(80).strength(0.15))
+      .force('charge', d3.forceManyBody().strength(-120))
+      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.05))
       .force('collision', d3.forceCollide().radius(d => getRadius(d) + 2))
-      .force('x', d3.forceX(width / 2).strength(0.03))
-      .force('y', d3.forceY(height / 2).strength(0.03));
+      .force('x', d3.forceX(width / 2).strength(0.02))
+      .force('y', d3.forceY(height / 2).strength(0.02))
+      .alphaDecay(0.03)
+      .velocityDecay(0.5)
+      .alpha(0.8);
 
-    const link = g.append('g')
-      .selectAll('line')
-      .data(validEdges)
-      .join('line')
-      .attr('stroke', d => edgeColors[d.type] || edgeColors.default)
-      .attr('stroke-width', d => d.confidence === 'extracted' ? 1.5 : 1)
-      .attr('stroke-dasharray', d => d.confidence === 'inferred' ? '4,3' : null)
-      .attr('opacity', 0.5);
+    // Throttled redraw
+    let needsRedraw = true;
+    let lastFrameTime = 0;
+    const FRAME_INTERVAL = 1000 / 40; // 40fps cap
 
-    const node = g.append('g')
-      .selectAll('circle')
-      .data(uniqueNodes)
-      .join('circle')
-      .attr('r', d => getRadius(d))
-      .attr('fill', d => colors[d.type] || colors.default)
-      .attr('stroke', '#0d1117')
-      .attr('stroke-width', 2)
-      .style('cursor', 'pointer')
-      .call(d3.drag()
-        .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-        .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
-        .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
+    function requestRedraw() { needsRedraw = true; }
 
-    const label = g.append('g')
-      .selectAll('text')
-      .data(uniqueNodes.filter(d => d.connections > 1 || d.type === 'lesson_item' || d.type === 'lesson' || d.type === 'error'))
-      .join('text')
-      .text(d => {
-        const prefix = d.type === 'error' ? '⚠ ' : '';
-        const text = d.label.length > 25 ? d.label.slice(0, 25) + '...' : d.label;
-        return prefix + text;
-      })
-      .attr('font-size', d => d.type === 'lesson_item' ? 8 : d.type === 'error' ? 9 : 10)
-      .attr('fill', d => d.type === 'error' ? '#ef4444' : '#c9d1d9')
-      .attr('dx', d => getRadius(d) + 4)
-      .attr('dy', 3);
+    function renderLoop(timestamp) {
+      if (needsRedraw && timestamp - lastFrameTime >= FRAME_INTERVAL) {
+        draw(searchMatched);
+        needsRedraw = false;
+        lastFrameTime = timestamp;
+      }
+      requestAnimationFrame(renderLoop);
+    }
+    requestAnimationFrame(renderLoop);
+
+    // Zoom & pan
+    let transform = { x: 0, y: 0, k: 1 };
+    let isDragging = false;
+    let dragStart = { x: 0, y: 0 };
+    let dragTransformStart = { x: 0, y: 0 };
+
+    function applyTransform() {
+      ctx.setTransform(dpr * transform.k, 0, 0, dpr * transform.k, dpr * transform.x, dpr * transform.y);
+    }
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      const newK = Math.max(0.1, Math.min(8, transform.k * delta));
+      const ratio = newK / transform.k;
+      transform.x = e.clientX - ratio * (e.clientX - transform.x);
+      transform.y = e.clientY - ratio * (e.clientY - transform.y);
+      transform.k = newK;
+      draw();
+    }, { passive: false });
+
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 0 && !hoveredNode) {
+        isDragging = true;
+        dragStart = { x: e.clientX, y: e.clientY };
+        dragTransformStart = { x: transform.x, y: transform.y };
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (isDragging) {
+        transform.x = dragTransformStart.x + (e.clientX - dragStart.x);
+        transform.y = dragTransformStart.y + (e.clientY - dragStart.y);
+        draw();
+      } else {
+        handleHover(e);
+      }
+    });
+
+    canvas.addEventListener('mouseup', () => { isDragging = false; });
+    canvas.addEventListener('mouseleave', () => { isDragging = false; hoveredNode = null; tooltip.style.display = 'none'; });
 
     // Filters
     const activeFilters = new Set(types);
     const activeClusters = new Set([...clusterMap.keys()]);
     let focusMode = false;
     let focusedNodeId = null;
+    let hoveredNode = null;
+    let selectedNode = null;
 
     const filterContainer = d3.select('#filters');
-
-    // Type filters
     const typeSection = filterContainer.append('div').attr('class', 'filter-section');
-    typeSection.append('div').attr('class', 'filter-section-title').text('Node Types');
+    typeSection.append('div').attr('class', 'filter-section-title').text('Types');
     const typeRow = typeSection.append('div').attr('class', 'filter-row');
-
     typeRow.selectAll('.filter-btn')
       .data(types)
       .join('button')
@@ -374,15 +427,13 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
         if (activeFilters.has(d)) activeFilters.delete(d);
         else activeFilters.add(d);
         d3.select(this).classed('active', activeFilters.has(d));
-        updateVisibility();
+        draw();
       });
 
-    // Cluster filters
     if (clusterMap.size > 1) {
       const clusterSection = filterContainer.append('div').attr('class', 'filter-section');
       clusterSection.append('div').attr('class', 'filter-section-title').text('Clusters');
       const clusterRow = clusterSection.append('div').attr('class', 'filter-row');
-
       clusterRow.selectAll('.filter-btn')
         .data([...clusterMap.keys()].sort())
         .join('button')
@@ -392,112 +443,88 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
           if (activeClusters.has(d)) activeClusters.delete(d);
           else activeClusters.add(d);
           d3.select(this).classed('active', activeClusters.has(d));
-          updateVisibility();
+          draw();
         });
     }
 
-    // Focus mode
-    d3.select('#focusMode').on('click', function() {
-      focusMode = !focusMode;
-      d3.select(this).classed('active', focusMode);
-      if (!focusMode) {
-        focusedNodeId = null;
-        updateVisibility();
-      }
-    });
-
     // Legend
     const legend = d3.select('#legend');
-    const legendData = types.map(t => ({ type: t, color: colors[t] || '#8b949e' }));
-    legend.selectAll('.legend-item')
-      .data(legendData)
-      .join('div')
-      .attr('class', 'legend-item')
-      .html(d => '<div class="legend-color" style="background:' + d.color + '"></div>' + d.type);
-    legend.style('display', 'block');
-
-    function updateVisibility() {
-      if (focusMode && focusedNodeId) {
-        const connected = validEdges.filter(e => e.source.id === focusedNodeId || e.target.id === focusedNodeId);
-        const neighborIds = new Set(connected.map(e => e.source.id === focusedNodeId ? e.target.id : e.source.id));
-        
-        node.style('opacity', d => d.id === focusedNodeId ? 1 : neighborIds.has(d.id) ? 0.7 : 0.05);
-        label.style('opacity', d => d.id === focusedNodeId ? 1 : neighborIds.has(d.id) ? 0.7 : 0);
-        link.style('opacity', d => d.source.id === focusedNodeId || d.target.id === focusedNodeId ? 0.8 : 0.02);
-        return;
-      }
-
-      const visibleNodes = new Set();
-      node.style('opacity', d => {
-        const typeVisible = activeFilters.has(d.type);
-        const clusterVisible = !d.file_path || activeClusters.has(d.file_path.split('/')[0]);
-        const visible = typeVisible && clusterVisible;
-        if (visible) visibleNodes.add(d.id);
-        return visible ? 1 : 0.1;
-      });
-      label.style('opacity', d => activeFilters.has(d.type) ? 1 : 0);
-      link.style('opacity', d =>
-        visibleNodes.has(d.source.id) && visibleNodes.has(d.target.id) ? 0.5 : 0.05
-      );
-    }
-
-    // Search
-    const searchInput = document.getElementById('searchInput');
-    searchInput.addEventListener('input', (e) => {
-      const term = e.target.value.toLowerCase();
-      if (!term) {
-        node.style('opacity', 1);
-        label.style('opacity', 1);
-        link.style('opacity', 0.5);
-        return;
-      }
-      const matched = new Set(uniqueNodes.filter(n =>
-        n.label.toLowerCase().includes(term) || n.id.toLowerCase().includes(term)
-      ).map(n => n.id));
-      // Also match via annotations
-      for (const [nid, anns] of Object.entries(annotationsObj)) {
-        if (anns.some(a => a.value.toLowerCase().includes(term) || a.key.toLowerCase().includes(term))) {
-          matched.add(nid);
-        }
-      }
-      node.style('opacity', d => matched.has(d.id) ? 1 : 0.1);
-      label.style('opacity', d => matched.has(d.id) ? 1 : 0);
-      link.style('opacity', d =>
-        matched.has(d.source.id) && matched.has(d.target.id) ? 0.5 : 0.05
-      );
+    types.forEach(t => {
+      const item = legend.append('div').attr('class', 'legend-item');
+      item.append('div').attr('class', 'legend-color').style('background', colors[t] || '#8b949e');
+      item.append('span').text(t);
     });
 
-    // Click on node - enriched info panel
-    node.on('click', (e, d) => {
-      e.stopPropagation();
-      
-      if (focusMode) {
-        focusedNodeId = d.id;
+    function isVisible(n) {
+      if (!activeFilters.has(n.type)) return false;
+      if (n.file_path && !activeClusters.has(n.file_path.split('/')[0])) return false;
+      return true;
+    }
+
+    function isNodeVisible(n) {
+      if (focusMode && focusedNodeId) {
+        const connected = validEdges.filter(e =>
+          (e.source.id === focusedNodeId && e.target.id === n.id) ||
+          (e.target.id === focusedNodeId && e.source.id === n.id)
+        );
+        return n.id === focusedNodeId || connected.length > 0;
       }
-      
-      const connected = validEdges.filter(edge => edge.source.id === d.id || edge.target.id === d.id);
-      const neighborIds = new Set(connected.map(e => e.source.id === d.id ? e.target.id : e.source.id));
+      return isVisible(n);
+    }
 
-      node.style('opacity', n => neighborIds.has(n.id) || n.id === d.id ? 1 : 0.1);
-      label.style('opacity', n => neighborIds.has(n.id) || n.id === d.id ? 1 : 0);
-      link.style('opacity', l => l.source.id === d.id || l.target.id === d.id ? 0.8 : 0.05);
+    // Tooltip
+    const tooltip = document.getElementById('tooltip');
 
-      const info = nodeInfo[d.id] || { incoming: [], outgoing: [] };
+    function handleHover(e) {
+      const mx = (e.clientX - transform.x) / transform.k;
+      const my = (e.clientY - transform.y) / transform.k;
+      let found = null;
+      for (const n of uniqueNodes) {
+        if (!isNodeVisible(n)) continue;
+        const dx = n.x - mx, dy = n.y - my;
+        const r = getRadius(n);
+        if (dx * dx + dy * dy < r * r) { found = n; break; }
+      }
+      hoveredNode = found;
+      if (found) {
+        canvas.style.cursor = 'pointer';
+        tooltip.style.display = 'block';
+        tooltip.style.left = (e.clientX + 15) + 'px';
+        tooltip.style.top = (e.clientY - 10) + 'px';
+        tooltip.textContent = found.label.length > 40 ? found.label.slice(0, 40) + '...' : found.label;
+      } else {
+        canvas.style.cursor = isDragging ? 'grabbing' : 'grab';
+        tooltip.style.display = 'none';
+      }
+      draw();
+    }
 
-      // Title
+    // Click
+    canvas.addEventListener('click', (e) => {
+      if (hoveredNode) {
+        selectedNode = hoveredNode;
+        if (focusMode) focusedNodeId = hoveredNode.id;
+        showInfo(hoveredNode);
+        draw();
+      } else {
+        selectedNode = null;
+        document.getElementById('info').style.display = 'none';
+        if (focusMode) { focusedNodeId = null; draw(); }
+      }
+    });
+
+    function showInfo(d) {
       document.getElementById('infoTitle').textContent = d.label;
-
-      // Meta
       let metaHtml = '';
       if (d.created_at) metaHtml += '<span class="date">' + d.created_at + '</span> ';
       metaHtml += '<span class="tag" style="background:' + (colors[d.type] || '#333') + '20;color:' + (colors[d.type] || '#999') + '">' + d.type + '</span>';
       if (d.type === 'file' || d.type === 'lesson' || d.type === 'lesson_item') {
         metaHtml += ' <span style="color:#8b949e;font-size:11px">' + (d.file_path || d.id) + '</span>';
       }
-      if (d.connections) metaHtml += ' <span style="font-size:11px;color:#8b949e">' + d.connections + ' connexion(s)</span>';
+      if (d.connections) metaHtml += ' <span style="font-size:11px;color:#8b949e">' + d.connections + ' connection(s)</span>';
       document.getElementById('infoMeta').innerHTML = metaHtml;
 
-      // Content - type-specific
+      const info = nodeInfo[d.id] || { incoming: [], outgoing: [] };
       const contentDiv = document.getElementById('infoContent');
       let contentHtml = '';
 
@@ -505,28 +532,19 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
         contentHtml += '<div class="section"><div class="section-title">Lesson</div><div class="item">' + d.label + '</div></div>';
       } else if (d.type === 'lesson') {
         const contains = validEdges.filter(e => e.source.id === d.id && e.type === 'lesson_contains')
-          .map(e => uniqueNodes.find(n => n.id === e.target.id))
-          .filter(Boolean);
+          .map(e => uniqueNodes.find(n => n.id === e.target.id)).filter(Boolean);
         if (contains.length) {
           contentHtml += '<div class="section"><div class="section-title">Items (' + contains.length + ')</div>';
           contains.slice(0, 10).forEach(it => {
-            const date = it.created_at ? '<span style="color:#58a6ff">[' + it.created_at + ']</span> ' : '';
-            contentHtml += '<div class="item">' + date + (it.label.length > 100 ? it.label.slice(0, 100) + '...' : it.label) + '</div>';
+            contentHtml += '<div class="item">' + (it.label.length > 100 ? it.label.slice(0, 100) + '...' : it.label) + '</div>';
           });
-          if (contains.length > 10) contentHtml += '<div class="item" style="color:#8b949e">... and ' + (contains.length - 10) + ' more</div>';
           contentHtml += '</div>';
         }
       } else if (d.type === 'session') {
         const modified = info.outgoing.filter(e => e.type === 'session_modified').map(e => e.to_id);
-        const produced = info.outgoing.filter(e => e.type === 'session_produced').map(e => e.to_id);
         if (modified.length) {
           contentHtml += '<div class="section"><div class="section-title">Modified</div>';
           modified.forEach(m => contentHtml += '<div class="item">' + m + '</div>');
-          contentHtml += '</div>';
-        }
-        if (produced.length) {
-          contentHtml += '<div class="section"><div class="section-title">Produced</div>';
-          produced.forEach(p => contentHtml += '<div class="item">' + p + '</div>');
           contentHtml += '</div>';
         }
       } else if (d.type === 'file') {
@@ -535,7 +553,6 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
         if (provides.length) {
           contentHtml += '<div class="section"><div class="section-title">Provides</div>';
           provides.slice(0, 8).forEach(p => contentHtml += '<div class="item">' + p + '</div>');
-          if (provides.length > 8) contentHtml += '<div class="item" style="color:#8b949e">... +' + (provides.length - 8) + ' more</div>';
           contentHtml += '</div>';
         }
         if (usesInput.length) {
@@ -544,85 +561,190 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
           contentHtml += '</div>';
         }
       }
-
       contentDiv.innerHTML = contentHtml;
       contentDiv.style.display = contentHtml ? 'block' : 'none';
 
-      // Tags
       const tags = (annotationsObj[d.id] || []).filter(a => a.key === 'tag').map(a => a.value);
       const tagsDiv = document.getElementById('infoTags');
       if (tags.length) {
         tagsDiv.innerHTML = tags.map(t => '<span class="tag" style="background:#22c55e20;color:#22c55e">' + t + '</span>').join('');
         tagsDiv.style.display = 'block';
-      } else {
-        tagsDiv.style.display = 'none';
-      }
+      } else { tagsDiv.style.display = 'none'; }
 
-      // Edges grouped
       const edgesDiv = document.getElementById('infoEdges');
       let edgesHtml = '';
-      const outgoingByType = {};
-      (info.outgoing || []).forEach(e => {
-        if (!outgoingByType[e.type]) outgoingByType[e.type] = [];
-        outgoingByType[e.type].push(e.to_id);
-      });
-      const incomingByType = {};
-      (info.incoming || []).forEach(e => {
-        if (!incomingByType[e.type]) incomingByType[e.type] = [];
-        incomingByType[e.type].push(e.from_id);
-      });
-
+      const outgoingByType = {}, incomingByType = {};
+      (info.outgoing || []).forEach(e => { (outgoingByType[e.type] = outgoingByType[e.type] || []).push(e.to_id); });
+      (info.incoming || []).forEach(e => { (incomingByType[e.type] = incomingByType[e.type] || []).push(e.from_id); });
       for (const [type, targets] of Object.entries(outgoingByType)) {
         const lbl = relationLabels[type] || type;
         edgesHtml += '<div class="section"><div class="section-title">↓ ' + lbl + '</div>';
-        targets.slice(0, 6).forEach(t => {
-          const target = uniqueNodes.find(n => n.id === t);
-          edgesHtml += '<div class="item">' + (target ? target.label : t) + '</div>';
-        });
-        if (targets.length > 6) edgesHtml += '<div class="item" style="color:#8b949e">... +' + (targets.length - 6) + ' more</div>';
+        targets.slice(0, 6).forEach(t => { const target = uniqueNodes.find(n => n.id === t); edgesHtml += '<div class="item">' + (target ? target.label : t) + '</div>'; });
         edgesHtml += '</div>';
       }
       for (const [type, sources] of Object.entries(incomingByType)) {
         const lbl = relationLabels[type] || type;
         edgesHtml += '<div class="section"><div class="section-title">↑ ' + lbl + '</div>';
-        sources.slice(0, 6).forEach(s => {
-          const src = uniqueNodes.find(n => n.id === s);
-          edgesHtml += '<div class="item">' + (src ? src.label : s) + '</div>';
-        });
-        if (sources.length > 6) edgesHtml += '<div class="item" style="color:#8b949e">... +' + (sources.length - 6) + ' more</div>';
+        sources.slice(0, 6).forEach(s => { const src = uniqueNodes.find(n => n.id === s); edgesHtml += '<div class="item">' + (src ? src.label : s) + '</div>'; });
         edgesHtml += '</div>';
       }
-
       edgesDiv.innerHTML = edgesHtml;
       edgesDiv.style.display = edgesHtml ? 'block' : 'none';
-
       document.getElementById('info').style.display = 'block';
+    }
+
+    // Focus mode
+    document.getElementById('focusMode').addEventListener('click', function() {
+      focusMode = !focusMode;
+      this.classList.toggle('active', focusMode);
+      if (!focusMode) { focusedNodeId = null; }
+      draw();
     });
 
-    svg.on('click', () => {
-      document.getElementById('info').style.display = 'none';
-      if (focusMode) {
-        focusedNodeId = null;
+    // Search
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      const term = e.target.value.toLowerCase();
+      if (!term) { draw(); return; }
+      const matched = new Set();
+      uniqueNodes.forEach(n => {
+        if (n.label.toLowerCase().includes(term) || n.id.toLowerCase().includes(term)) matched.add(n.id);
+      });
+      for (const [nid, anns] of Object.entries(annotationsObj)) {
+        if (anns.some(a => a.value.toLowerCase().includes(term) || a.key.toLowerCase().includes(term))) matched.add(nid);
       }
-      updateVisibility();
+      draw(matched);
     });
 
-    simulation.on('tick', () => {
-      link
-        .attr('x1', d => d.source.x)
-        .attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x)
-        .attr('y2', d => d.target.y);
-      node
-        .attr('cx', d => d.x)
-        .attr('cy', d => d.y);
-      label
-        .attr('x', d => d.x)
-        .attr('y', d => d.y);
+    // Export PNG
+    document.getElementById('exportBtn').addEventListener('click', function() {
+      const link = document.createElement('a');
+      link.download = 'omnigraph-' + new Date().toISOString().slice(0, 10) + '.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
     });
+
+    // Reset layout
+    document.getElementById('resetLayoutBtn').addEventListener('click', function() {
+      localStorage.removeItem('omnigraph_layout');
+      location.reload();
+    });
+
+    // Draw function
+    let searchMatched = null;
+    const origDraw = draw;
+    function draw(matchedSet) {
+      searchMatched = matchedSet || null;
+      ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+      ctx.save();
+      applyTransform();
+
+      // Draw edges
+      for (const e of validEdges) {
+        if (!e.source || !e.target) continue;
+        if (!isNodeVisible(e.source) || !isNodeVisible(e.target)) continue;
+        if (searchMatched && !searchMatched.has(e.source.id) && !searchMatched.has(e.target.id)) continue;
+
+        ctx.beginPath();
+        ctx.moveTo(e.source.x, e.source.y);
+        ctx.lineTo(e.target.x, e.target.y);
+        ctx.strokeStyle = edgeColors[e.type] || edgeColors.default;
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+      }
+
+      // Draw nodes
+      for (const n of uniqueNodes) {
+        if (!isNodeVisible(n)) continue;
+        if (searchMatched && !searchMatched.has(n.id)) {
+          ctx.globalAlpha = 0.1;
+        }
+        const r = getRadius(n);
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = colors[n.type] || colors.default;
+        ctx.fill();
+
+        // Stroke
+        if (n.type === 'error') {
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 3;
+          ctx.stroke();
+        } else if (n.type === 'fix') {
+          ctx.strokeStyle = '#22c55e';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([3, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        } else if (n.type === 'workaround') {
+          ctx.strokeStyle = '#f97316';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        } else if (n === hoveredNode || n === selectedNode) {
+          ctx.strokeStyle = '#58a6ff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        ctx.globalAlpha = 1;
+      }
+
+      // Draw labels for hovered/selected/high-degree nodes
+      const showLabels = new Set();
+      if (hoveredNode) showLabels.add(hoveredNode.id);
+      if (selectedNode) showLabels.add(selectedNode.id);
+      uniqueNodes.forEach(n => { if (n.connections > 15 && isNodeVisible(n)) showLabels.add(n.id); });
+
+      for (const n of uniqueNodes) {
+        if (!showLabels.has(n.id)) continue;
+        if (!isNodeVisible(n)) continue;
+        const r = getRadius(n);
+        ctx.font = '10px -apple-system, sans-serif';
+        ctx.fillStyle = n.type === 'error' ? '#ef4444' : '#c9d1d9';
+        const text = n.label.length > 30 ? n.label.slice(0, 30) + '...' : n.label;
+        ctx.fillText(text, n.x + r + 4, n.y + 3);
+      }
+
+      ctx.restore();
+    }
+
+    // Drag nodes
+    let draggedNode = null;
+    canvas.addEventListener('mousedown', (e) => {
+      if (hoveredNode) {
+        draggedNode = hoveredNode;
+        draggedNode.fx = (e.clientX - transform.x) / transform.k;
+        draggedNode.fy = (e.clientY - transform.y) / transform.k;
+      }
+    });
+    canvas.addEventListener('mousemove', (e) => {
+      if (draggedNode) {
+        draggedNode.fx = (e.clientX - transform.x) / transform.k;
+        draggedNode.fy = (e.clientY - transform.y) / transform.k;
+        simulation.alpha(0.1).restart();
+      }
+    });
+    canvas.addEventListener('mouseup', () => {
+      if (draggedNode) { draggedNode.fx = null; draggedNode.fy = null; draggedNode = null; }
+    });
+
+    // Simulation tick
+    let saveTimeout = null;
+    simulation.on('tick', () => {
+      requestRedraw();
+      if (!saveTimeout) {
+        saveTimeout = setTimeout(() => {
+          const positions = {};
+          uniqueNodes.forEach(n => { if (n.x != null) positions[n.id] = { x: n.x, y: n.y }; });
+          localStorage.setItem('omnigraph_layout', JSON.stringify(positions));
+          saveTimeout = null;
+        }, 500);
+      }
+    });
+
+    simulation.on('end', () => { requestRedraw(); });
 
     document.getElementById('stats').textContent =
-      uniqueNodes.length + ' noeuds | ' + validEdges.length + ' liens';
+      uniqueNodes.length + ' nodes | ' + validEdges.length + ' edges';
 
   } catch(err) {
     document.getElementById('debug').style.display = 'block';

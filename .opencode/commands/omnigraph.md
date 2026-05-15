@@ -1,17 +1,14 @@
 ---
-name: omnigraph
-description: Query the dependency graph for context before editing. Supports check, query, impact, path, orphans, git-log, and session-resume.
-user-invocable: true
-argument-hint: <command> [args...]
+description: Query the omnigraph dependency graph (check, query, impact, path, orphans, session-resume, semantic)
 ---
 
-# OmniGraph Skill
+Use the `skill` tool to load the "omnigraph" skill, then execute the requested command.
 
 Always use the system `omnigraph` command (installed via NixOS). Never use `bun run omnigraph.ts`.
 
 Run `omnigraph <command>` from project root.
 
-## Commands
+## Available commands
 
 | Command | Description |
 |---------|-------------|
@@ -26,20 +23,12 @@ Run `omnigraph <command>` from project root.
 | `omnigraph semantic <q>` | BM25 semantic search (--type=, --top=) |
 | `omnigraph build` | Scan → build DB → generate HTML |
 
-## save command
+## If `.omnigraph/graph.db` is missing
 
-When running `omnigraph save`, **always provide the commit message yourself** based on the session changes. Do not ask the user for it.
+Run `omnigraph build` first.
 
-1. Review what was accomplished in the session (files modified, fixes, features)
-2. Construct a concise conventional commit message (e.g., `feat: add zellij layout`, `fix: niri wallpaper path`, `refactor: split theme module`)
-3. Run `omnigraph save "<message>"`
+## Output
 
-## Invoke
+Present results in max 15 lines, structured format.
 
-```
-/omnigraph check <file>
-/omnigraph query <term>
-/omnigraph impact <file>
-/omnigraph path <a> <b>
-/omnigraph session-resume
-```
+$ARGUMENTS

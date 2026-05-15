@@ -1,4 +1,5 @@
 import { GraphDB } from "../db.ts";
+import path from "node:path";
 
 export class ServeCommand {
   async run(
@@ -27,7 +28,7 @@ export class ServeCommand {
       },
       async fetch(req) {
         const url = new URL(req.url);
-        const path = url.pathname;
+        const pathname = url.pathname;
         const method = req.method;
 
         if (method === "OPTIONS") {
@@ -44,7 +45,7 @@ export class ServeCommand {
           const db = new GraphDB(dbPath);
 
           // API Routes
-          if (path === "/api/nodes") {
+          if (pathname === "/api/nodes") {
             const typeFilter = url.searchParams.get("type");
             const nodes = typeFilter 
               ? db.db.query("SELECT * FROM nodes WHERE type = ?").all(typeFilter)
@@ -52,8 +53,8 @@ export class ServeCommand {
             return jsonResponse({ nodes });
           }
 
-          if (path.startsWith("/api/nodes/")) {
-            const nodeId = decodeURIComponent(path.replace("/api/nodes/", ""));
+          if (pathname.startsWith("/api/nodes/")) {
+            const nodeId = decodeURIComponent(pathname.replace("/api/nodes/", ""));
             const node = db.getNodeById(nodeId);
             if (!node) {
               return jsonResponse({ error: "Node not found" }, 404);
@@ -63,7 +64,7 @@ export class ServeCommand {
             return jsonResponse({ node, backlinks, annotations });
           }
 
-          if (path === "/api/search") {
+          if (pathname === "/api/search") {
             const q = url.searchParams.get("q");
             if (!q) {
               return jsonResponse({ error: "Missing 'q' parameter" }, 400);
@@ -73,7 +74,7 @@ export class ServeCommand {
             return jsonResponse({ query: q, results });
           }
 
-          if (path === "/api/semantic") {
+          if (pathname === "/api/semantic") {
             const q = url.searchParams.get("q");
             if (!q) {
               return jsonResponse({ error: "Missing 'q' parameter" }, 400);
@@ -84,7 +85,7 @@ export class ServeCommand {
             return jsonResponse({ query: q, results });
           }
 
-          if (path === "/api/ask") {
+          if (pathname === "/api/ask") {
             if (method !== "POST") {
               return jsonResponse({ error: "Method not allowed" }, 405);
             }
@@ -111,7 +112,7 @@ export class ServeCommand {
             });
           }
 
-          if (path === "/api/backlinks") {
+          if (pathname === "/api/backlinks") {
             const id = url.searchParams.get("id");
             if (!id) {
               return jsonResponse({ error: "Missing 'id' parameter" }, 400);
@@ -121,7 +122,7 @@ export class ServeCommand {
             return jsonResponse({ id, depth, backlinks });
           }
 
-          if (path === "/api/impact") {
+          if (pathname === "/api/impact") {
             const id = url.searchParams.get("id");
             if (!id) {
               return jsonResponse({ error: "Missing 'id' parameter" }, 400);
@@ -170,7 +171,7 @@ export class ServeCommand {
             return jsonResponse(result);
           }
 
-          if (path === "/api/export") {
+          if (pathname === "/api/export") {
             const format = url.searchParams.get("format") || "json";
             const filterType = url.searchParams.get("filter") || undefined;
             
@@ -193,7 +194,7 @@ export class ServeCommand {
             return jsonResponse({ error: "Invalid format" }, 400);
           }
 
-          if (path === "/api/stats") {
+          if (pathname === "/api/stats") {
             const stats = db.count();
             const nodes = db.getAllNodes();
             const edges = db.getAllEdges();
@@ -212,13 +213,13 @@ export class ServeCommand {
             });
           }
 
-          if (path === "/api/analytics") {
+          if (pathname === "/api/analytics") {
             const analytics = db.computeAnalytics();
             return jsonResponse(analytics);
           }
 
-          if (path.startsWith("/api/summarize/")) {
-            const nodeId = decodeURIComponent(path.replace("/api/summarize/", ""));
+          if (pathname.startsWith("/api/summarize/")) {
+            const nodeId = decodeURIComponent(pathname.replace("/api/summarize/", ""));
             const result = db.generateSummary(nodeId);
             if (!result) {
               return jsonResponse({ error: "Node not found" }, 404);
@@ -226,7 +227,7 @@ export class ServeCommand {
             return jsonResponse(result);
           }
 
-          if (path === "/api/webhook/git-push") {
+          if (pathname === "/api/webhook/git-push") {
             if (readOnly) {
               return jsonResponse({ error: "Read-only mode" }, 403);
             }
@@ -241,47 +242,15 @@ export class ServeCommand {
             });
           }
 
-          if (path === "/") {
-            return new Response(`
-              <!DOCTYPE html>
-              <html>
-              <head>
-                <title>OmniGraph API</title>
-                <style>
-                  body { font-family: system-ui; background: #0d1117; color: #c9d1d9; padding: 40px; }
-                  h1 { color: #58a6ff; }
-                  code { background: #21262d; padding: 2px 8px; border-radius: 4px; }
-                  .endpoint { margin: 10px 0; padding: 10px; background: #161b22; border-radius: 6px; }
-                  a { color: #58a6ff; }
-                </style>
-              </head>
-              <body>
-                <h1>🚀 OmniGraph API</h1>
-                <p>Server running on port ${port}</p>
-                
-                <h2>Endpoints</h2>
-                <div class="endpoint"><code>GET /api/nodes</code> — List all nodes</div>
-                <div class="endpoint"><code>GET /api/nodes/:id</code> — Get node details + backlinks</div>
-                <div class="endpoint"><code>GET /api/search?q=auth</code> — Text search</div>
-                <div class="endpoint"><code>GET /api/semantic?q=auth</code> — Semantic search</div>
-                <div class="endpoint"><code>POST /api/ask</code> — Q&A with RAG</div>
-                <div class="endpoint"><code>GET /api/backlinks?id=file.ts</code> — Reverse dependencies</div>
-                <div class="endpoint"><code>GET /api/impact?id=file.ts</code> — Impact analysis</div>
-                <div class="endpoint"><code>GET /api/export?format=json</code> — Export graph</div>
-                <div class="endpoint"><code>GET /api/stats</code> — Graph statistics</div>
-                <div class="endpoint"><code>GET /api/analytics</code> — Advanced analytics (density, hubs, clusters)</div>
-                <div class="endpoint"><code>GET /api/summarize/:id</code> — Auto-summary for a node</div>
-                <div class="endpoint"><code>POST /api/webhook/git-push</code> — Git webhook</div>
-                
-                <h2>Examples</h2>
-                <pre><code>curl http://localhost:${port}/api/nodes
-curl http://localhost:${port}/api/semantic?q=auth
-curl -X POST http://localhost:${port}/api/ask -d '{"question":"Where is auth?"}'</code></pre>
-              </body>
-              </html>
-            `, {
-              headers: { "Content-Type": "text/html" }
-            });
+          if (pathname === "/") {
+            const htmlPath = path.join(projectPath, ".omnigraph", "index.html");
+            if (Bun.file(htmlPath).exists) {
+              const html = await Bun.file(htmlPath).text();
+              return new Response(html, {
+                headers: { "Content-Type": "text/html" }
+              });
+            }
+            return new Response("Graph visualization not found. Run 'omnigraph build' first.", { status: 404 });
           }
 
           return new Response("Not found", { status: 404 });
