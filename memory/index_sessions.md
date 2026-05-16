@@ -63,3 +63,4 @@
 
 - [fix-node-drag-on-canvas-using-mouse-captor](sessions/2026-05-16_fix-node-drag-on-canvas-using-mouse-captor/)
 - [style-compress-agents-md-to-160-lines-integrate-ka](sessions/2026-05-16_style-compress-agents-md-to-160-lines-integrate-ka/)
+- [fix-sigma-node-drag-using-canvas-listeners-inline-](sessions/2026-05-16_fix-sigma-node-drag-using-canvas-listeners-inline-/)

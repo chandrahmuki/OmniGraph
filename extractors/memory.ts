@@ -36,16 +36,40 @@ const TRANSVERSE_PATTERNS = [
 ];
 
 // Patterns for snapshot-style error/fix extraction
-const ERROR_PATTERN = /^(?:Error|FATAL|CRITICAL|PANIC|BUG|FAILURE):\s+/i;
-// Broader error detection for prose descriptions — only match when the context clearly describes a failure
-// Requires either: a failure verb + object, or explicit failure context
-const ERROR_PROSE_PATTERN = /\b(failed|fails|failure|broken|crash|crashed|segfault|panic|fatal|hang|hanged|froze|freeze|exception|bug|issue|problem|couldn't|unable to|unexpected|broke|regression)\b/i;
-// Additional context filter to reject false positives (lines that mention error words but aren't errors)
-const ERROR_CONTEXT_REJECT = /\b(plan|design|identify|extract|implement|add|feat|feature|improve|optimize|refactor|cleanup|remove|update|sync|show|display|visual)\b/i;
+const ERROR_EXPLICIT = /^(?:Error|FATAL|CRITICAL|PANIC|BUG|FAILURE|TypeError|ReferenceError|SyntaxError|RangeError|Promise|Exception):\s+/i;
+
+// Semantic error detection: words that describe a problem/failure state
+const ERROR_SIGNALS = /\b(failed|fails|failure|broken|crash|crashed|segfault|panic|fatal|hang|hanged|froze|freeze|exception|bug|issue|problem|couldn't|couldn.t|unable to|unable|unexpected|broke|regression|error|doesn.t work|don.t work|not working|ne marche pas|plante|planté|cassé|bug|problème|souci|erreur|impossible de|impossible|undefined|null reference|stack trace|traceback)\b/i;
+
+// Reject: lines that mention error words but describe plans, features, or improvements
+const ERROR_REJECT = /\b(plan to|will fix|should fix|going to fix|feat:|feature:|add error|added error|implement error|error handling|error messages|error page|error boundary|error tracking)\b/i;
+
 // Fix: explicit fix/resolve statements
 const FIX_PATTERN = /\b(Fixed|Resolved|Patched|Solved|Fix|Réparé|Corrigé|Fixé)\b/i;
+
 // Workaround: replacement, removal, or bypass without fixing root cause
 const WORKAROUND_PATTERN = /\b(Replaced|Switched|Swapped|Removed|Workaround|Bypass|Disabled|Avoid|Fallback|Remplacé|Supprimé|Désactivé|Évité|Contourné)\b/i;
+
+// Detect if a line describes an error/problem (semantic detection)
+function detectErrorIntent(line: string): "error" | "fix" | "workaround" | null {
+  const trimmed = line.trim();
+
+  // Explicit error prefix (Error:, TypeError:, etc.)
+  if (ERROR_EXPLICIT.test(trimmed)) return "error";
+
+  // Reject lines that mention error words but aren't actual errors
+  if (ERROR_REJECT.test(trimmed)) return null;
+
+  // Check for error signals — something is broken/failing
+  if (ERROR_SIGNALS.test(trimmed)) {
+    // But if it's clearly a fix statement, classify as fix instead
+    if (FIX_PATTERN.test(trimmed)) return "fix";
+    if (WORKAROUND_PATTERN.test(trimmed)) return "workaround";
+    return "error";
+  }
+
+  return null;
+}
 
 const ISSUE_PATTERNS = [
   /\b(has a bug|crashes|broken|incompatible|doesn.t work|fails to|regression|error when|issue with|problem with)\b/i,
@@ -365,13 +389,11 @@ export function extractMemory(
 
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
-          const fixMatch = line.match(FIX_PATTERN);
-          const errorMatch = line.match(ERROR_PATTERN);
-          const errorProseMatch = !fixMatch && !errorMatch && line.match(ERROR_PROSE_PATTERN);
+          const intent = detectErrorIntent(line);
 
-          // If line describes a fix or workaround, extract the implicit error from it
-          if (fixMatch) {
-            const isWorkaround = WORKAROUND_PATTERN.test(line);
+          // FIX or WORKAROUND line
+          if (intent === "fix" || intent === "workaround") {
+            const isWorkaround = intent === "workaround" || WORKAROUND_PATTERN.test(line);
             const resolutionType = isWorkaround ? "workaround" : "fix";
             const nodeId = isWorkaround
               ? `workaround:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`
@@ -444,14 +466,15 @@ export function extractMemory(
               }
             }
           }
-          // Explicit error line (Error:, FATAL:, etc.)
-          else if (errorMatch) {
-            const normalized = normalizeErrorText(line);
+          // ERROR line (explicit or semantic)
+          else if (intent === "error") {
+            const trimmed = line.trim();
+            const normalized = normalizeErrorText(trimmed);
             const canonicalId = `error:dedup_${normalized.replace(/[^a-zA-Z0-9]/g, "_")}`;
 
             if (!errorCanonicalMap.has(canonicalId)) {
               errorCanonicalMap.set(canonicalId, canonicalId);
-              const errorLabel = line.trim().slice(0, 120);
+              const errorLabel = ERROR_EXPLICIT.test(trimmed) ? trimmed.slice(0, 120) : `Prose: ${trimmed.slice(0, 120)}`;
               addNode(canonicalId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
               addAnnotation(canonicalId, "recurrence_count", "1");
             } else {
@@ -484,83 +507,6 @@ export function extractMemory(
               for (const rf of relatedFiles) {
                 addNode(rf, "file", rf.split("/").pop() || rf, rf);
                 addEdge(canonicalId, rf, "affects");
-              }
-            }
-          }
-          // Prose error detection (lines describing failures without explicit Error: prefix)
-          else if (errorProseMatch) {
-            // Reject lines that mention error words but describe plans/features/improvements, not actual failures
-            if (ERROR_CONTEXT_REJECT.test(line)) continue;
-
-            // Only capture if the line is substantive (not just a word match in passing)
-            const trimmed = line.trim();
-            if (trimmed.length > 20 && !trimmed.startsWith("#") && !trimmed.startsWith("|") && !trimmed.startsWith("- `")) {
-              const normalized = normalizeErrorText(trimmed);
-              const canonicalId = `error:dedup_${normalized.replace(/[^a-zA-Z0-9]/g, "_")}`;
-
-              if (!errorCanonicalMap.has(canonicalId)) {
-                errorCanonicalMap.set(canonicalId, canonicalId);
-                const errorLabel = `Prose: ${trimmed.slice(0, 120)}`;
-                addNode(canonicalId, "error", errorLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
-                addAnnotation(canonicalId, "recurrence_count", "1");
-              } else {
-                const existing = nodes.find(n => n.id === canonicalId);
-                if (existing) {
-                  const countAnn = annotations.find(a => a.node_id === canonicalId && a.key === "recurrence_count");
-                  if (countAnn) {
-                    const newCount = parseInt(countAnn.value) + 1;
-                    countAnn.value = String(newCount);
-                  }
-                }
-              }
-
-              addEdge(sessionId, canonicalId, "detected_error");
-              if (!sessionsForErrors.has(canonicalId)) sessionsForErrors.set(canonicalId, []);
-              sessionsForErrors.get(canonicalId)!.push(sessionId);
-              sessionErrors.push(canonicalId);
-
-              // Check if the same line also describes a workaround (e.g., "Removed X (broken)")
-              if (WORKAROUND_PATTERN.test(line)) {
-                const waId = `workaround:${sessionId}:${line.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
-                const waLabel = trimmed.slice(0, 120);
-                addNode(waId, "workaround", waLabel, `memory/sessions/${entry}/summary.md`, 0, sessionId.split("_")[0]);
-                addEdge(sessionId, waId, "applied_workaround");
-                addEdge(canonicalId, waId, "workaround_by");
-                addAnnotation(canonicalId, "resolution_type", "workaround");
-                sessionWorkarounds.push(waId);
-
-                const relatedFiles = [...sessionFiles].filter(f => {
-                  const fileName = f.split("/").pop() || "";
-                  const baseName = fileName.replace(/\.\w+$/, "");
-                  return trimmed.toLowerCase().includes(fileName.toLowerCase()) ||
-                         trimmed.toLowerCase().includes(baseName.toLowerCase()) ||
-                         trimmed.toLowerCase().includes(f.toLowerCase());
-                });
-                if (relatedFiles.length > 0) {
-                  workaroundToFileMap.set(waId, relatedFiles);
-                  errorToFileMap.set(canonicalId, relatedFiles);
-                  for (const rf of relatedFiles) {
-                    addNode(rf, "file", rf.split("/").pop() || rf, rf);
-                    addEdge(waId, rf, "affects");
-                    addEdge(canonicalId, rf, "affects");
-                  }
-                }
-              } else {
-                // Associate with session files
-                const relatedFiles = [...sessionFiles].filter(f => {
-                  const fileName = f.split("/").pop() || "";
-                  const baseName = fileName.replace(/\.\w+$/, "");
-                  return trimmed.toLowerCase().includes(fileName.toLowerCase()) ||
-                         trimmed.toLowerCase().includes(baseName.toLowerCase()) ||
-                         trimmed.toLowerCase().includes(f.toLowerCase());
-                });
-                if (relatedFiles.length > 0) {
-                  errorToFileMap.set(canonicalId, relatedFiles);
-                  for (const rf of relatedFiles) {
-                    addNode(rf, "file", rf.split("/").pop() || rf, rf);
-                    addEdge(canonicalId, rf, "affects");
-                  }
-                }
               }
             }
           }
