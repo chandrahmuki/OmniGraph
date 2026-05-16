@@ -233,21 +233,30 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       sigmaInstance.refresh();
     });
 
+    const mouseCaptor = sigmaInstance.getMouseCaptor();
+    let draggingNode = null;
+
     sigmaInstance.on('downNode', e => {
+      draggingNode = e.node;
       const n = d3Nodes.find(d => d.id === e.node);
       if (n) { n.fx = graph.getNodeAttribute(e.node, 'x'); n.fy = graph.getNodeAttribute(e.node, 'y'); simulation.alpha(0.3).restart(); }
     });
-    sigmaInstance.on('mousemove', e => {
-      const n = d3Nodes.find(d => d.id === e.node);
-      if (n && n.fx !== null && e.event) {
-        const vp = sigmaInstance.viewportToGraph({ x: e.event.x, y: e.event.y });
-        n.fx = vp.x; n.fy = vp.y;
-        graph.setNodeAttribute(n.id, 'x', vp.x); graph.setNodeAttribute(n.id, 'y', vp.y);
-        sigmaInstance.refresh();
-      }
+
+    mouseCaptor.addEventListener('mousemove', e => {
+      if (!draggingNode) return;
+      const n = d3Nodes.find(d => d.id === draggingNode);
+      if (!n) return;
+      const vp = sigmaInstance.viewportToGraph({ x: e.clientX, y: e.clientY });
+      n.fx = vp.x; n.fy = vp.y;
+      graph.setNodeAttribute(n.id, 'x', vp.x); graph.setNodeAttribute(n.id, 'y', vp.y);
+      sigmaInstance.refresh();
     });
-    sigmaInstance.on('mouseup', () => {
-      d3Nodes.forEach(n => { n.fx = null; n.fy = null; });
+
+    mouseCaptor.addEventListener('mouseup', () => {
+      if (draggingNode) {
+        d3Nodes.forEach(n => { n.fx = null; n.fy = null; });
+        draggingNode = null;
+      }
     });
 
     let saveTimeout = null;
