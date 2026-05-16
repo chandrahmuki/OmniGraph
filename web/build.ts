@@ -242,7 +242,7 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       if (n) { n.fx = graph.getNodeAttribute(e.node, 'x'); n.fy = graph.getNodeAttribute(e.node, 'y'); simulation.alpha(0.3).restart(); }
     });
 
-    mouseCaptor.addEventListener('mousemove', e => {
+    mouseCaptor.on('mousemove', e => {
       if (!draggingNode) return;
       const n = d3Nodes.find(d => d.id === draggingNode);
       if (!n) return;
@@ -252,7 +252,7 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       sigmaInstance.refresh();
     });
 
-    mouseCaptor.addEventListener('mouseup', () => {
+    mouseCaptor.on('mouseup', () => {
       if (draggingNode) {
         d3Nodes.forEach(n => { n.fx = null; n.fy = null; });
         draggingNode = null;

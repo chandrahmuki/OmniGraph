@@ -58,3 +58,7 @@
 
 - [feat-canvas-renderer-60fps-performance-optimizatio](sessions/2026-05-15_feat-canvas-renderer-60fps-performance-optimizatio/)
 - [feat-canvas-renderer-60fps-optimization](sessions/2026-05-15_feat-canvas-renderer-60fps-optimization/)
+
+## 2026-05-16
+
+- [fix-node-drag-on-canvas-using-mouse-captor](sessions/2026-05-16_fix-node-drag-on-canvas-using-mouse-captor/)
