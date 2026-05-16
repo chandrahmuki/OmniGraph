@@ -233,29 +233,36 @@ export function buildHtml(dbPath: string, outputPath: string, projectPath: strin
       sigmaInstance.refresh();
     });
 
-    const mouseCaptor = sigmaInstance.getMouseCaptor();
-    let draggingNode = null;
+    const canvas = document.querySelector('#app canvas');
+    let draggedNode = null;
 
-    sigmaInstance.on('downNode', e => {
-      draggingNode = e.node;
-      const n = d3Nodes.find(d => d.id === e.node);
-      if (n) { n.fx = graph.getNodeAttribute(e.node, 'x'); n.fy = graph.getNodeAttribute(e.node, 'y'); simulation.alpha(0.3).restart(); }
+    canvas.addEventListener('mousedown', e => {
+      if (hoveredNodeId) {
+        e.stopImmediatePropagation();
+        draggedNode = d3Nodes.find(d => d.id === hoveredNodeId);
+        if (draggedNode) {
+          draggedNode.fx = graph.getNodeAttribute(draggedNode.id, 'x');
+          draggedNode.fy = graph.getNodeAttribute(draggedNode.id, 'y');
+          simulation.alpha(0.3).restart();
+        }
+      }
     });
 
-    mouseCaptor.on('mousemove', e => {
-      if (!draggingNode) return;
-      const n = d3Nodes.find(d => d.id === draggingNode);
-      if (!n) return;
+    canvas.addEventListener('mousemove', e => {
+      if (!draggedNode) return;
+      e.stopImmediatePropagation();
       const vp = sigmaInstance.viewportToGraph({ x: e.clientX, y: e.clientY });
-      n.fx = vp.x; n.fy = vp.y;
-      graph.setNodeAttribute(n.id, 'x', vp.x); graph.setNodeAttribute(n.id, 'y', vp.y);
+      draggedNode.fx = vp.x; draggedNode.fy = vp.y;
+      graph.setNodeAttribute(draggedNode.id, 'x', vp.x);
+      graph.setNodeAttribute(draggedNode.id, 'y', vp.y);
       sigmaInstance.refresh();
     });
 
-    mouseCaptor.on('mouseup', () => {
-      if (draggingNode) {
+    canvas.addEventListener('mouseup', e => {
+      if (draggedNode) {
+        e.stopImmediatePropagation();
         d3Nodes.forEach(n => { n.fx = null; n.fy = null; });
-        draggingNode = null;
+        draggedNode = null;
       }
     });
 
